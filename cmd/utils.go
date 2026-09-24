@@ -1,0 +1,69 @@
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"text/tabwriter"
+
+	"github.com/navidrome/navidrome/conf"
+	"github.com/navidrome/navidrome/core/auth"
+	"github.com/navidrome/navidrome/db"
+	"github.com/navidrome/navidrome/log"
+	"github.com/navidrome/navidrome/model"
+	"github.com/navidrome/navidrome/model/request"
+	"github.com/navidrome/navidrome/persistence"
+)
+
+// requireExistingDB aborts the command when the database file (DbPath minus DSN
+// params) does not exist.
+func requireExistingDB() {
+	path, _, _ := strings.Cut(conf.Server.DbPath, "?")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		log.Fatal("No existing database", "path", path)
+	}
+}
+
+func confirmYES(warning string) bool {
+	fmt.Println(warning)
+	fmt.Printf("Please enter YES (all caps) to continue: ")
+	var input string
+	_, err := fmt.Scanln(&input)
+	return input == "YES" && err == nil
+}
+
+// newTabWriter keeps every CLI table on the same column settings.
+func newTabWriter(out io.Writer) *tabwriter.Writer {
+	return tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+}
+
+func getAdminContext(ctx context.Context) (model.DataStore, context.Context) {
+	sqlDB := db.Db()
+	ds := persistence.New(sqlDB)
+	ctx = auth.WithAdminUser(ctx, ds)
+	u, _ := request.UserFrom(ctx)
+	if !u.IsAdmin {
+		log.Fatal(ctx, "There must be at least one admin user to run this command.")
+	}
+	return ds, ctx
+}
+
+func getUser(ctx context.Context, id string, ds model.DataStore) (*model.User, error) {
+	user, err := ds.User(ctx).FindByUsername(id)
+
+	if err != nil && !errors.Is(err, model.ErrNotFound) {
+		return nil, fmt.Errorf("finding user by name: %w", err)
+	}
+
+	if errors.Is(err, model.ErrNotFound) {
+		user, err = ds.User(ctx).Get(id)
+		if err != nil {
+			return nil, fmt.Errorf("finding user by id: %w", err)
+		}
+	}
+
+	return user, nil
+}
