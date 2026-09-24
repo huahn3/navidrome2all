@@ -88,6 +88,7 @@ const DeviceSelector = ({
       <Tooltip title={translate('jukebox.outputDevice')}>
         <IconButton
           size={isDesktop ? 'small' : undefined}
+          disableRipple={!isDesktop}
           onClick={handleOpen}
           onMouseDown={(e) => e.stopPropagation()}
           data-testid="device-selector-button"

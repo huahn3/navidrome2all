@@ -17,15 +17,22 @@ const useStyles = makeStyles((theme) => ({
     alignItems: 'center',
     gap: theme.spacing(0.5),
     minWidth: 0,
+    width: (props) => (props.compact ? '100%' : 'auto'),
+    flex: (props) => (props.compact ? '1 1 auto' : '0 0 auto'),
   },
   slider: {
     width: 110,
     flex: '0 0 auto',
+    height: 4,
+    padding: '13px 0',
+    '& .MuiSlider-valueLabel': {
+      display: 'none !important',
+    },
   },
   compact: {
     width: 'auto',
     flex: '1 1 auto',
-    minWidth: 0,
+    minWidth: 70,
   },
   percent: {
     fontSize: '0.75rem',
@@ -33,30 +40,68 @@ const useStyles = makeStyles((theme) => ({
     opacity: 0.8,
     textAlign: 'right',
     width: '2.5rem',
+    flexShrink: 0,
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+  },
+  muteButton: {
+    width: 34,
+    height: 34,
+    padding: 0,
+    flexShrink: 0,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%',
+    WebkitTapHighlightColor: 'transparent',
+    outline: 'none',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    '&:focus, &:focus-visible, &:active': {
+      outline: 'none',
+      boxShadow: 'none',
+      WebkitTapHighlightColor: 'transparent',
+    },
   },
   icon: {
-    fontSize: (props) => (props.compact ? '20px' : '24px'),
+    fontSize: '19px',
   },
   rail: {
     backgroundColor:
       theme.palette.type === 'dark'
-        ? 'rgba(255,255,255,0.35)'
-        : 'rgba(0,0,0,0.2)',
+        ? 'rgba(255,255,255,0.2)'
+        : 'rgba(0,0,0,0.15)',
     opacity: 1,
     height: 4,
+    borderRadius: 2,
   },
   track: {
     backgroundColor: theme.palette.primary.main,
     height: 4,
+    borderRadius: 2,
   },
   thumb: {
-    width: 14,
-    height: 14,
-    marginTop: -5,
-    marginLeft: -7,
-    backgroundColor: theme.palette.common.white,
+    width: 12,
+    height: 12,
+    minWidth: 12,
+    maxWidth: 12,
+    minHeight: 12,
+    maxHeight: 12,
+    marginTop: -4,
+    marginLeft: -6,
+    borderRadius: '50% !important',
+    boxSizing: 'border-box !important',
+    backgroundColor: '#ffffff !important',
     border: `2px solid ${theme.palette.primary.main}`,
-    '&::before': { display: 'none' },
+    boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+    outline: 'none !important',
+    WebkitTapHighlightColor: 'transparent !important',
+    transition: 'transform 0.12s ease !important',
+    '&:hover, &.Mui-focusVisible, &.Mui-active': {
+      boxShadow: 'none !important',
+      transform: 'scale(1.15) !important',
+    },
+    '&::before, &::after': { display: 'none !important' },
   },
 }))
 
@@ -107,7 +152,9 @@ const VolumeControl = ({ compact = false }) => {
       onTouchStart={(e) => e.stopPropagation()}
     >
       <IconButton
-        size={compact ? undefined : 'small'}
+        size="small"
+        disableRipple
+        className={classes.muteButton}
         onClick={handleToggleMute}
         aria-label={translate('player.volumeText')}
         title={translate('player.volumeText')}
@@ -129,9 +176,11 @@ const VolumeControl = ({ compact = false }) => {
         step={1}
         onChange={handleChange}
         aria-label={translate('player.volumeText')}
-        valueLabelDisplay="auto"
+        valueLabelDisplay="off"
       />
-      <span className={classes.percent}>{percent}%</span>
+      <span className={classes.percent} data-testid="volume-percent">
+        {percent}%
+      </span>
     </div>
   )
 }

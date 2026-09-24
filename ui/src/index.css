@@ -12,6 +12,33 @@ code {
     source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
 
+*,
+*::before,
+*::after {
+  -webkit-tap-highlight-color: transparent !important;
+  outline: none !important;
+}
+
+*:focus,
+*:focus-visible,
+*:active {
+  outline: none !important;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+.music-player-panel,
+.music-player-panel * {
+  -webkit-tap-highlight-color: transparent !important;
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+.music-player-panel ::selection {
+  background: transparent !important;
+}
+
 .rc-slider {
   z-index: 78;
 }

@@ -10,7 +10,13 @@ import useCurrentTheme from '../themes/useCurrentTheme'
 import { useSearchRefocus } from '../common'
 
 const useStyles = makeStyles({
-  root: { paddingBottom: (props) => (props.addPadding ? '80px' : 0) },
+  root: {
+    paddingBottom: (props) => (props.addPadding ? '84px' : 0),
+    '@media screen and (max-width: 600px)': {
+      paddingBottom: (props) =>
+        props.addPadding ? 'calc(140px + env(safe-area-inset-bottom))' : 0,
+    },
+  },
 })
 
 const Layout = (props) => {

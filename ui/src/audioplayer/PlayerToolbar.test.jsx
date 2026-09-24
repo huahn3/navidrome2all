@@ -124,16 +124,18 @@ describe('<PlayerToolbar />', () => {
 
       // Each button should be in its own list item, plus the volume row
       const listItems = screen.getAllByRole('listitem')
-      expect(listItems).toHaveLength(3)
+      expect(listItems).toHaveLength(4)
 
-      // Verify both buttons are rendered
+      // Verify buttons are rendered
       expect(screen.getByTestId('save-queue-button')).toBeInTheDocument()
       expect(screen.getByTestId('love-button')).toBeInTheDocument()
+      expect(screen.getByTestId('device-selector')).toBeInTheDocument()
 
       // The volume row comes first and spans the whole line
       expect(listItems[0]).toHaveAttribute('data-testid', 'volume-row')
       expect(listItems[1].className).toContain('mobileListItem')
       expect(listItems[2].className).toContain('mobileListItem')
+      expect(listItems[3].className).toContain('mobileListItem')
       expect(screen.getByTestId('volume-control')).toBeInTheDocument()
     })
 

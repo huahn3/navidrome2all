@@ -23,14 +23,25 @@ const useStyles = makeStyles((theme) => ({
     padding: 0,
     margin: 0,
   },
+  mobileVolumeRow: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    listStyle: 'none',
+    padding: 0,
+    margin: 0,
+    height: 34,
+    flex: '1 1 auto',
+    minWidth: 0,
+  },
   mobileListItem: {
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     listStyle: 'none',
-    padding: theme.spacing(0.5),
+    padding: 0,
     margin: 0,
-    height: 24,
+    height: 34,
+    width: 34,
   },
   button: {
     width: '2.5rem',
@@ -41,19 +52,42 @@ const useStyles = makeStyles((theme) => ({
     padding: 0,
   },
   mobileButton: {
-    width: 24,
-    height: 24,
+    width: 34,
+    height: 34,
+    minWidth: 34,
+    maxWidth: 34,
     padding: 0,
     margin: 0,
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    fontSize: '18px',
+    borderRadius: '50%',
+    WebkitTapHighlightColor: 'transparent',
+    outline: 'none',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    '&:focus, &:focus-visible, &:active': {
+      outline: 'none',
+      boxShadow: 'none',
+      WebkitTapHighlightColor: 'transparent',
+    },
+    '& svg': {
+      width: 19,
+      height: 19,
+      fontSize: 19,
+    },
   },
   mobileIcon: {
-    fontSize: '18px',
-    display: 'flex',
+    fontSize: '19px',
+    display: 'inline-flex',
     alignItems: 'center',
+    justifyContent: 'center',
+    width: 19,
+    height: 19,
+    minWidth: 19,
+    maxWidth: 19,
+    minHeight: 19,
+    maxHeight: 19,
   },
 }))
 
@@ -82,6 +116,7 @@ const PlayerToolbar = ({ id, isRadio }) => {
   const saveQueueButton = (
     <IconButton
       size={isDesktop ? 'small' : undefined}
+      disableRipple={!isDesktop}
       onClick={handleSaveQueue}
       disabled={isRadio}
       data-testid="save-queue-button"
@@ -98,6 +133,7 @@ const PlayerToolbar = ({ id, isRadio }) => {
       size={isDesktop ? undefined : 'inherit'}
       disabled={loading || toggling || !id || isRadio}
       className={buttonClass}
+      disableRipple={!isDesktop}
     />
   )
 
@@ -117,12 +153,15 @@ const PlayerToolbar = ({ id, isRadio }) => {
         </li>
       ) : (
         <>
-          <li className={`${listItemClass} item`} data-testid="volume-row">
+          <li
+            className={`${classes.mobileVolumeRow} item`}
+            data-testid="volume-row"
+          >
             <VolumeControl compact />
           </li>
           <li className={`${listItemClass} item`}>{saveQueueButton}</li>
+          <li className={`${listItemClass} item`}>{loveButton}</li>
           <li className={`${listItemClass} item`}>
-            {loveButton}
             <DeviceSelector
               isDesktop={isDesktop}
               buttonClassName={buttonClass}

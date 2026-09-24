@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useInterval } from '../common'
 import { useDispatch, useSelector } from 'react-redux'
-import { useMediaQuery } from '@material-ui/core'
 import { ThemeProvider } from '@material-ui/core/styles'
 import {
   createMuiTheme,
@@ -67,7 +66,6 @@ const Player = () => {
   const [remoteStatusDelay, setRemoteStatusDelay] = useState(1000)
   const remoteStatusFailuresRef = useRef(0)
   const remoteStatusErrorShownRef = useRef(false)
-  const isDesktop = useMediaQuery('(min-width:810px)')
   // Volume: the store holds the single source of truth (0..1, perceptual).
   // The <audio> element gets the squared value, remote outputs get the percent.
   const lastVolumeSentRef = useRef(null)
@@ -398,7 +396,8 @@ const Player = () => {
       showDownload: false,
       showLyric: true,
       showReload: false,
-      toggleMode: !isDesktop,
+      toggleMode: false,
+      responsive: false,
       glassBg: false,
       showThemeSwitch: false,
       showMediaSession: true,
@@ -419,7 +418,7 @@ const Player = () => {
       locale: locale(translate),
       sortableOptions: { delay: 200, delayOnTouchOnly: true },
     }),
-    [gainInfo, isDesktop, playerTheme, translate, playerState.mode],
+    [gainInfo, playerTheme, translate, playerState.mode],
   )
 
   const options = useMemo(() => {
