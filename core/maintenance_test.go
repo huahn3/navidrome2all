@@ -1,0 +1,526 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"time"
+
+	"github.com/navidrome/navidrome/model"
+	"github.com/navidrome/navidrome/model/request"
+	"github.com/navidrome/navidrome/tests"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/sirupsen/logrus"
+)
+
+var _ = Describe("Maintenance", func() {
+	var ds *tests.MockDataStore
+	var mfRepo *extendedMediaFileRepo
+	var service Maintenance
+	var ctx context.Context
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		ctx = request.WithUser(ctx, model.User{ID: "user1", IsAdmin: true})
+
+		ds = createTestDataStore()
+		mfRepo = ds.MockedMediaFile.(*extendedMediaFileRepo)
+		service = NewMaintenance(ds)
+	})
+
+	Describe("DeleteMissingFiles", func() {
+		Context("with specific IDs", func() {
+			It("deletes specific missing files and runs GC", func() {
+				// Setup: mock missing files with album IDs
+				mfRepo.SetData(model.MediaFiles{
+					{ID: "mf1", AlbumID: "album1", Missing: true},
+					{ID: "mf2", AlbumID: "album2", Missing: true},
+				})
+
+				err := service.DeleteMissingFiles(ctx, []string{"mf1", "mf2"})
+
+				Expect(err).ToNot(HaveOccurred())
+				Expect(mfRepo.deleteMissingCalled).To(BeTrue())
+				Expect(mfRepo.deletedIDs).To(Equal([]string{"mf1", "mf2"}))
+				Expect(ds.GCCalled).To(BeTrue(), "GC should be called after deletion")
+			})
+
+			It("triggers artist stats refresh and album refresh after deletion", func() {
+				artistRepo := ds.MockedArtist.(*extendedArtistRepo)
+				// Setup: mock missing files with albums
+				albumRepo := ds.MockedAlbum.(*extendedAlbumRepo)
+				albumRepo.SetData(model.Albums{
+					{ID: "album1", Name: "Test Album", SongCount: 5},
+				})
+				mfRepo.SetData(model.MediaFiles{
+					{ID: "mf1", AlbumID: "album1", Missing: true},
+					{ID: "mf2", AlbumID: "album1", Missing: false, Size: 1000, Duration: 180},
+					{ID: "mf3", AlbumID: "album1", Missing: false, Size: 2000, Duration: 200},
+				})
+
+				err := service.DeleteMissingFiles(ctx, []string{"mf1"})
+
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for background goroutines to complete
+				service.(*maintenanceService).wait()
+
+				// RefreshStats should be called
+				Expect(artistRepo.IsRefreshStatsCalled()).To(BeTrue(), "Artist stats should be refreshed")
+
+				// Album should be updated with new calculated values
+				Expect(albumRepo.GetPutCallCount()).To(BeNumerically(">", 0), "Album.Put() should be called to refresh album data")
+			})
+
+			It("returns error if deletion fails", func() {
+				mfRepo.deleteMissingError = errors.New("delete failed")
+
+				err := service.DeleteMissingFiles(ctx, []string{"mf1"})
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("delete failed"))
+			})
+
+			It("continues even if album tracking fails", func() {
+				mfRepo.SetError(true)
+
+				err := service.DeleteMissingFiles(ctx, []string{"mf1"})
+
+				// Should not fail, just log warning
+				Expect(err).ToNot(HaveOccurred())
+				Expect(mfRepo.deleteMissingCalled).To(BeTrue())
+			})
+
+			It("returns error if GC fails", func() {
+				mfRepo.SetData(model.MediaFiles{
+					{ID: "mf1", AlbumID: "album1", Missing: true},
+				})
+
+				// Set GC to return error
+				ds.GCError = errors.New("gc failed")
+
+				err := service.DeleteMissingFiles(ctx, []string{"mf1"})
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("gc failed"))
+			})
+		})
+
+		Context("album ID extraction", func() {
+			It("extracts unique album IDs from missing files", func() {
+				mfRepo.SetData(model.MediaFiles{
+					{ID: "mf1", AlbumID: "album1", Missing: true},
+					{ID: "mf2", AlbumID: "album1", Missing: true},
+					{ID: "mf3", AlbumID: "album2", Missing: true},
+				})
+
+				err := service.DeleteMissingFiles(ctx, []string{"mf1", "mf2", "mf3"})
+
+				Expect(err).ToNot(HaveOccurred())
+			})
+
+			It("skips files without album IDs", func() {
+				mfRepo.SetData(model.MediaFiles{
+					{ID: "mf1", AlbumID: "", Missing: true},
+					{ID: "mf2", AlbumID: "album1", Missing: true},
+				})
+
+				err := service.DeleteMissingFiles(ctx, []string{"mf1", "mf2"})
+
+				Expect(err).ToNot(HaveOccurred())
+			})
+		})
+	})
+
+	Describe("DeleteAllMissingFiles", func() {
+		It("deletes all missing files and runs GC", func() {
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "mf1", AlbumID: "album1", Missing: true},
+				{ID: "mf2", AlbumID: "album2", Missing: true},
+				{ID: "mf3", AlbumID: "album3", Missing: true},
+			})
+
+			err := service.DeleteAllMissingFiles(ctx)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(ds.GCCalled).To(BeTrue(), "GC should be called after deletion")
+		})
+
+		It("returns error if deletion fails", func() {
+			mfRepo.SetError(true)
+
+			err := service.DeleteAllMissingFiles(ctx)
+
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("handles empty result gracefully", func() {
+			mfRepo.SetData(model.MediaFiles{})
+
+			err := service.DeleteAllMissingFiles(ctx)
+
+			Expect(err).ToNot(HaveOccurred())
+		})
+	})
+
+	Describe("Album refresh logic", func() {
+		var albumRepo *extendedAlbumRepo
+
+		BeforeEach(func() {
+			albumRepo = ds.MockedAlbum.(*extendedAlbumRepo)
+		})
+
+		Context("when album has no tracks after deletion", func() {
+			It("skips the album without updating it", func() {
+				// Setup album with no remaining tracks
+				albumRepo.SetData(model.Albums{
+					{ID: "album1", Name: "Empty Album", SongCount: 1},
+				})
+				mfRepo.SetData(model.MediaFiles{
+					{ID: "mf1", AlbumID: "album1", Missing: true},
+				})
+
+				err := service.DeleteMissingFiles(ctx, []string{"mf1"})
+
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for background goroutines to complete
+				service.(*maintenanceService).wait()
+
+				// Album should NOT be updated because it has no tracks left
+				Expect(albumRepo.GetPutCallCount()).To(Equal(0), "Album with no tracks should not be updated")
+			})
+		})
+
+		Context("when Put fails for one album", func() {
+			It("continues processing other albums", func() {
+				albumRepo.SetData(model.Albums{
+					{ID: "album1", Name: "Album 1"},
+					{ID: "album2", Name: "Album 2"},
+				})
+				mfRepo.SetData(model.MediaFiles{
+					{ID: "mf1", AlbumID: "album1", Missing: true},
+					{ID: "mf2", AlbumID: "album1", Missing: false, Size: 1000, Duration: 180},
+					{ID: "mf3", AlbumID: "album2", Missing: true},
+					{ID: "mf4", AlbumID: "album2", Missing: false, Size: 2000, Duration: 200},
+				})
+
+				// Make Put fail on first call but succeed on subsequent calls
+				albumRepo.putError = errors.New("put failed")
+				albumRepo.failOnce = true
+
+				err := service.DeleteMissingFiles(ctx, []string{"mf1", "mf3"})
+
+				// Should not fail even if one album's Put fails
+				Expect(err).ToNot(HaveOccurred())
+
+				// Wait for background goroutines to complete
+				service.(*maintenanceService).wait()
+
+				// Put should have been called multiple times
+				Expect(albumRepo.GetPutCallCount()).To(BeNumerically(">", 0), "Put should be attempted")
+			})
+		})
+
+		Context("when media file loading fails", func() {
+			It("logs warning but continues when tracking affected albums fails", func() {
+				// Set up log capturing
+				hook, cleanup := tests.LogHook()
+				defer cleanup()
+
+				albumRepo.SetData(model.Albums{
+					{ID: "album1", Name: "Album 1"},
+				})
+				mfRepo.SetData(model.MediaFiles{
+					{ID: "mf1", AlbumID: "album1", Missing: true},
+				})
+				// Make GetAll fail when loading media files
+				mfRepo.SetError(true)
+
+				err := service.DeleteMissingFiles(ctx, []string{"mf1"})
+
+				// Deletion should succeed despite the tracking error
+				Expect(err).ToNot(HaveOccurred())
+				Expect(mfRepo.deleteMissingCalled).To(BeTrue())
+
+				// Verify the warning was logged
+				Expect(hook.LastEntry()).ToNot(BeNil())
+				Expect(hook.LastEntry().Level).To(Equal(logrus.WarnLevel))
+				Expect(hook.LastEntry().Message).To(Equal("Error tracking affected albums for refresh"))
+			})
+		})
+	})
+
+	Describe("RemapMissingFile", func() {
+		It("relocates the missing file's identity onto the target and runs GC", func() {
+			created := time.Now().Add(-30 * 24 * time.Hour)
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "m1", Path: "old/song.mp3", AlbumID: "album1", CreatedAt: created, Missing: true},
+				{ID: "t1", Path: "new/song.mp3", AlbumID: "album1", Missing: false},
+			})
+
+			Expect(service.RemapMissingFile(ctx, "m1", "t1")).To(Succeed())
+
+			got, err := mfRepo.Get("m1")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(got.Path).To(Equal("new/song.mp3")) // moved to target's location
+			Expect(got.Missing).To(BeFalse())
+			Expect(got.CreatedAt).To(BeTemporally("==", created)) // created_at preserved
+			exists, _ := mfRepo.Exists("t1")
+			Expect(exists).To(BeFalse()) // discarded row removed
+			Expect(ds.GCCalled).To(BeTrue())
+		})
+
+		It("moves the target's annotations, bookmarks and playlist entries onto the surviving id", func() {
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "m1", AlbumID: "album1", Missing: true},
+				{ID: "t1", AlbumID: "album1", Missing: false},
+			})
+
+			Expect(service.RemapMissingFile(ctx, "m1", "t1")).To(Succeed())
+
+			Expect(mfRepo.ReassignReferencesCalls).To(HaveKeyWithValue("t1", "m1"))
+		})
+
+		It("reassigns album annotations when the old album is emptied", func() {
+			albumRepo := ds.MockedAlbum.(*extendedAlbumRepo)
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "m1", AlbumID: "album1", Missing: true},
+				{ID: "t1", AlbumID: "album2", Missing: false},
+			})
+
+			mfRepo.SetCountAll(0)
+			Expect(service.RemapMissingFile(ctx, "m1", "t1")).To(Succeed())
+
+			Expect(albumRepo.ReassignAnnotationCalls).To(HaveKeyWithValue("album1", "album2"))
+		})
+
+		It("does not reassign album annotations when the old album is not emptied", func() {
+			albumRepo := ds.MockedAlbum.(*extendedAlbumRepo)
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "m1", AlbumID: "album1", Missing: true},
+				{ID: "m2", AlbumID: "album1", Missing: false},
+				{ID: "t1", AlbumID: "album2", Missing: false},
+			})
+
+			Expect(service.RemapMissingFile(ctx, "m1", "t1")).To(Succeed())
+
+			Expect(albumRepo.ReassignAnnotationCalls).To(BeEmpty())
+		})
+
+		It("does not reassign annotations when the album is unchanged", func() {
+			albumRepo := ds.MockedAlbum.(*extendedAlbumRepo)
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "m1", AlbumID: "album1", Missing: true},
+				{ID: "t1", AlbumID: "album1", Missing: false},
+			})
+
+			Expect(service.RemapMissingFile(ctx, "m1", "t1")).To(Succeed())
+
+			Expect(albumRepo.ReassignAnnotationCalls).To(BeEmpty())
+		})
+
+		It("returns ErrNotFound when the missing file does not exist", func() {
+			mfRepo.SetData(model.MediaFiles{{ID: "t1", Missing: false}})
+
+			Expect(service.RemapMissingFile(ctx, "nope", "t1")).To(MatchError(model.ErrNotFound))
+		})
+
+		It("refuses to remap from a file that is not missing", func() {
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "m1", Missing: false},
+				{ID: "t1", Missing: false},
+			})
+
+			Expect(service.RemapMissingFile(ctx, "m1", "t1")).To(MatchError(ErrNotMissing))
+		})
+
+		It("refuses to remap a file onto itself", func() {
+			mfRepo.SetData(model.MediaFiles{{ID: "m1", Missing: true}})
+
+			Expect(service.RemapMissingFile(ctx, "m1", "m1")).To(MatchError(ErrSameFile))
+		})
+
+		It("refuses to remap onto a target that is itself missing", func() {
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "m1", Missing: true},
+				{ID: "t1", Missing: true},
+			})
+
+			Expect(service.RemapMissingFile(ctx, "m1", "t1")).To(MatchError(ErrTargetMissing))
+		})
+
+		It("refreshes artist and album stats right after the remap", func() {
+			artistRepo := ds.MockedArtist.(*extendedArtistRepo)
+			albumRepo := ds.MockedAlbum.(*extendedAlbumRepo)
+			albumRepo.SetData(model.Albums{
+				{ID: "album1", Name: "Old Album", SongCount: 2, Size: 1100, Duration: 110},
+				{ID: "album2", Name: "New Album", SongCount: 1, Size: 2000, Duration: 200},
+			})
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "m1", Path: "old/1.mp3", Album: "Old Album", AlbumID: "album1", Missing: true, Size: 100, Duration: 10},
+				{ID: "k1", Path: "old/2.mp3", Album: "Old Album", AlbumID: "album1", Missing: false, Size: 1000, Duration: 100},
+				{ID: "t1", Path: "new/1.mp3", Album: "New Album", AlbumID: "album2", Missing: false, Size: 2000, Duration: 200},
+			})
+
+			Expect(service.RemapMissingFile(ctx, "m1", "t1")).To(Succeed())
+
+			Expect(artistRepo.IsRefreshStatsCalled()).To(BeTrue(), "Artist stats should be refreshed")
+
+			// The old album lost the remapped track, so its stats are recalculated from the remaining one
+			oldAlbum, err := albumRepo.Get("album1")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(oldAlbum.SongCount).To(Equal(1))
+			Expect(oldAlbum.Size).To(Equal(int64(1000)))
+			Expect(oldAlbum.Duration).To(BeNumerically("==", 100))
+
+			// The target album keeps the track, now under the missing file's ID
+			newAlbum, err := albumRepo.Get("album2")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(newAlbum.SongCount).To(Equal(1))
+			Expect(newAlbum.Size).To(Equal(int64(2000)))
+			Expect(newAlbum.Duration).To(BeNumerically("==", 200))
+		})
+
+		It("returns an error if GC fails", func() {
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "m1", AlbumID: "album1", Missing: true},
+				{ID: "t1", AlbumID: "album1", Missing: false},
+			})
+			ds.GCError = errors.New("gc failed")
+
+			Expect(service.RemapMissingFile(ctx, "m1", "t1")).To(MatchError(ContainSubstring("gc failed")))
+		})
+
+		It("preserves the target's participants on the remapped track", func() {
+			participant := model.Participant{
+				Artist: model.Artist{ID: "a1", Name: "Artist", OrderArtistName: "artist", MbzArtistID: "mbz-artist"},
+			}
+			mfRepo.SetData(model.MediaFiles{
+				{ID: "m1", AlbumID: "album1", Missing: true},
+				{ID: "t1", AlbumID: "album2", Missing: false, Participants: model.Participants{
+					model.RoleArtist: model.ParticipantList{participant},
+				}},
+			})
+
+			Expect(service.RemapMissingFile(ctx, "m1", "t1")).To(Succeed())
+
+			// The surviving row is the missing file's ID, holding the target's data
+			got, err := mfRepo.GetWithParticipants("m1")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(got.Participants).To(HaveKeyWithValue(model.RoleArtist, model.ParticipantList{participant}))
+		})
+	})
+})
+
+// Test helper to create a mock DataStore with controllable behavior
+func createTestDataStore() *tests.MockDataStore {
+	ds := &tests.MockDataStore{}
+
+	// Create extended album repo with Put tracking
+	albumRepo := &extendedAlbumRepo{
+		MockAlbumRepo: tests.CreateMockAlbumRepo(),
+	}
+	ds.MockedAlbum = albumRepo
+
+	// Create extended artist repo with RefreshStats tracking
+	artistRepo := &extendedArtistRepo{
+		MockArtistRepo: tests.CreateMockArtistRepo(),
+	}
+	ds.MockedArtist = artistRepo
+
+	// Create extended media file repo with DeleteMissing support
+	mfRepo := &extendedMediaFileRepo{
+		MockMediaFileRepo: tests.CreateMockMediaFileRepo(),
+	}
+	ds.MockedMediaFile = mfRepo
+
+	return ds
+}
+
+// Extension of MockMediaFileRepo to add DeleteMissing method
+type extendedMediaFileRepo struct {
+	*tests.MockMediaFileRepo
+	deleteMissingCalled bool
+	deletedIDs          []string
+	deleteMissingError  error
+}
+
+func (m *extendedMediaFileRepo) DeleteMissing(ids []string) error {
+	m.deleteMissingCalled = true
+	m.deletedIDs = ids
+	if m.deleteMissingError != nil {
+		return m.deleteMissingError
+	}
+	// Actually delete from the mock data
+	for _, id := range ids {
+		delete(m.Data, id)
+	}
+	return nil
+}
+
+// Extension of MockAlbumRepo to track Put calls
+type extendedAlbumRepo struct {
+	*tests.MockAlbumRepo
+	mu           sync.RWMutex
+	putCallCount int
+	lastPutData  *model.Album
+	putError     error
+	failOnce     bool
+}
+
+func (m *extendedAlbumRepo) Put(album *model.Album) error {
+	m.mu.Lock()
+	m.putCallCount++
+	m.lastPutData = album
+
+	// Handle failOnce behavior
+	var err error
+	if m.putError != nil {
+		if m.failOnce {
+			err = m.putError
+			m.putError = nil // Clear error after first failure
+			m.mu.Unlock()
+			return err
+		}
+		err = m.putError
+		m.mu.Unlock()
+		return err
+	}
+	m.mu.Unlock()
+
+	return m.MockAlbumRepo.Put(album)
+}
+
+func (m *extendedAlbumRepo) GetPutCallCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.putCallCount
+}
+
+// Extension of MockArtistRepo to track RefreshStats calls
+type extendedArtistRepo struct {
+	*tests.MockArtistRepo
+	mu                 sync.RWMutex
+	refreshStatsCalled bool
+	refreshStatsError  error
+}
+
+func (m *extendedArtistRepo) RefreshStats(allArtists bool) (int64, error) {
+	m.mu.Lock()
+	m.refreshStatsCalled = true
+	err := m.refreshStatsError
+	m.mu.Unlock()
+
+	if err != nil {
+		return 0, err
+	}
+	return m.MockArtistRepo.RefreshStats(allArtists)
+}
+
+func (m *extendedArtistRepo) IsRefreshStatsCalled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.refreshStatsCalled
+}

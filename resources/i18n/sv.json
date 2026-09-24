@@ -1,0 +1,747 @@
+{
+  "languageName": "Svenska",
+  "resources": {
+    "song": {
+      "name": "Låt |||| Låtar",
+      "fields": {
+        "albumArtist": "Albumartist",
+        "duration": "Längd",
+        "trackNumber": "#",
+        "playCount": "Spelningar",
+        "title": "Titel",
+        "artist": "Artist",
+        "album": "Album",
+        "path": "Filsökväg",
+        "genre": "Genre",
+        "compilation": "Samlingsalbum",
+        "year": "År",
+        "size": "Filstorlek",
+        "updatedAt": "Uppdaterad",
+        "bitRate": "Bithastighet",
+        "discSubtitle": "Skivans undertitel",
+        "starred": "Favorit",
+        "comment": "Kommentar",
+        "rating": "Betyg",
+        "quality": "Kvalitet",
+        "bpm": "BPM",
+        "playDate": "Senast spelad",
+        "channels": "Kanaler",
+        "createdAt": "Tillagd",
+        "grouping": "Gruppering",
+        "mood": "Stämning",
+        "participants": "Ytterligare medverkande",
+        "tags": "Ytterligare taggar",
+        "mappedTags": "Mappade taggar",
+        "rawTags": "Omodifierade taggar",
+        "bitDepth": "Bitdjup",
+        "sampleRate": "Samplingsfrekvens",
+        "missing": "Saknas",
+        "libraryName": "Bibliotek",
+        "composer": "Kompositör",
+        "disc": "Skiva %{discNumber}",
+        "albumGain": "Volymjustering (album)",
+        "trackGain": "Volymjustering (låt)"
+      },
+      "actions": {
+        "addToQueue": "Lägg till i kön",
+        "playNow": "Spela nu",
+        "addToPlaylist": "Lägg till i spellista",
+        "shuffleAll": "Blanda alla",
+        "download": "Ladda ner",
+        "playNext": "Spela härnäst",
+        "info": "Visa information",
+        "showInPlaylist": "Visa i spellista",
+        "instantMix": "Direktmix"
+      }
+    },
+    "album": {
+      "name": "Album |||| Album",
+      "fields": {
+        "albumArtist": "Albumartist",
+        "artist": "Artist",
+        "duration": "Längd",
+        "songCount": "Antal låtar",
+        "playCount": "Spelningar",
+        "name": "Namn",
+        "genre": "Genre",
+        "compilation": "Samlingsalbum",
+        "year": "År",
+        "updatedAt": "Uppdaterad",
+        "comment": "Kommentar",
+        "rating": "Betyg",
+        "createdAt": "Tillagt",
+        "size": "Storlek",
+        "originalDate": "Originaldatum",
+        "releaseDate": "Utgivningsdatum",
+        "releases": "Utgåva |||| Utgåvor",
+        "released": "Utgiven",
+        "recordLabel": "Skivbolag",
+        "catalogNum": "Katalognummer",
+        "releaseType": "Typ",
+        "grouping": "Gruppering",
+        "media": "Media",
+        "mood": "Stämning",
+        "date": "Inspelningsdatum",
+        "missing": "Saknas",
+        "libraryName": "Bibliotek"
+      },
+      "actions": {
+        "playAll": "Spela",
+        "playNext": "Spela härnäst",
+        "addToQueue": "Lägg till i kön",
+        "shuffle": "Blanda",
+        "addToPlaylist": "Lägg till i spellista",
+        "download": "Ladda ner",
+        "info": "Visa information",
+        "share": "Dela",
+        "refresh": "Uppdatera metadata"
+      },
+      "lists": {
+        "all": "Alla",
+        "random": "Slumpmässiga",
+        "recentlyAdded": "Nyligen tillagda",
+        "recentlyPlayed": "Nyligen spelade",
+        "mostPlayed": "Mest spelade",
+        "starred": "Favoriter",
+        "topRated": "Högst betygsatta"
+      }
+    },
+    "artist": {
+      "name": "Artist |||| Artister",
+      "fields": {
+        "name": "Namn",
+        "albumCount": "Antal album",
+        "songCount": "Antal låtar",
+        "playCount": "Spelningar",
+        "rating": "Betyg",
+        "genre": "Genre",
+        "size": "Storlek",
+        "role": "Roll",
+        "missing": "Saknas"
+      },
+      "roles": {
+        "albumartist": "Albumartist |||| Albumartister",
+        "artist": "Artist |||| Artister",
+        "composer": "Kompositör |||| Kompositörer",
+        "conductor": "Dirigent |||| Dirigenter",
+        "lyricist": "Textförfattare |||| Textförfattare",
+        "arranger": "Arrangör |||| Arrangörer",
+        "producer": "Producent |||| Producenter",
+        "director": "Inspelningsledare |||| Inspelningsledare",
+        "engineer": "Ljudtekniker |||| Ljudtekniker",
+        "mixer": "Mixare |||| Mixare",
+        "remixer": "Remixare |||| Remixare",
+        "djmixer": "DJ-mixare |||| DJ-mixare",
+        "performer": "Utövande artist |||| Utövande artister",
+        "maincredit": "Albumartist eller artist |||| Albumartister eller artister"
+      },
+      "actions": {
+        "shuffle": "Blanda",
+        "radio": "Radio",
+        "topSongs": "Topplåtar"
+      }
+    },
+    "user": {
+      "name": "Användare |||| Användare",
+      "fields": {
+        "userName": "Användarnamn",
+        "isAdmin": "Administratör",
+        "lastLoginAt": "Senaste inloggning",
+        "updatedAt": "Uppdaterad",
+        "name": "Namn",
+        "password": "Lösenord",
+        "createdAt": "Skapad",
+        "changePassword": "Byt lösenord?",
+        "currentPassword": "Nuvarande lösenord",
+        "newPassword": "Nytt lösenord",
+        "token": "Åtkomsttoken",
+        "lastAccessAt": "Senaste åtkomst",
+        "libraries": "Bibliotek",
+        "scrobbleFilter": "Scrobblingsfilter"
+      },
+      "helperTexts": {
+        "name": "Ändringar av ditt namn syns först vid nästa inloggning",
+        "libraries": "Välj vilka bibliotek användaren ska ha tillgång till, eller lämna tomt för att använda standardbiblioteken",
+        "scrobbleFilter": "Låtar som matchar dessa regler för smarta spellistor skickas inte till Last.fm, ListenBrainz eller scrobblingtillägg. Samma JSON-syntax och beteende som för smarta spellistor används. Exempel: {\"all\":[{\"lt\":{\"rating\":4}}]}. Lämna tomt för att scrobbla allt. Antalet spelningar som lagras lokalt påverkas inte."
+      },
+      "notifications": {
+        "created": "Användare skapad",
+        "updated": "Användare uppdaterad",
+        "deleted": "Användare borttagen"
+      },
+      "message": {
+        "listenBrainzToken": "Ange din användartoken för ListenBrainz.",
+        "clickHereForToken": "Klicka här för att hämta din token",
+        "selectAllLibraries": "Välj alla bibliotek",
+        "adminAutoLibraries": "Administratörer har automatiskt åtkomst till alla bibliotek"
+      },
+      "validation": {
+        "librariesRequired": "Minst ett bibliotek måste väljas för användare som inte är administratörer",
+        "invalidScrobbleFilter": "Måste innehålla giltiga regler för smarta spellistor. Begränsning av antalet låtar, förskjutning och uppdateringsfördröjning stöds inte."
+      }
+    },
+    "player": {
+      "name": "Spelare |||| Spelare",
+      "fields": {
+        "name": "Namn",
+        "transcodingId": "Omkodning",
+        "maxBitRate": "Högsta bithastighet",
+        "client": "Klient",
+        "userName": "Användarnamn",
+        "lastSeen": "Senast sedd",
+        "reportRealPath": "Rapportera den faktiska sökvägen",
+        "scrobbleEnabled": "Scrobbla till externa tjänster"
+      }
+    },
+    "transcoding": {
+      "name": "Omkodning |||| Omkodningar",
+      "fields": {
+        "name": "Namn",
+        "targetFormat": "Målformat",
+        "defaultBitRate": "Standardbithastighet",
+        "command": "Kommando"
+      },
+      "choices": {
+        "noDefaultBitRate": "Ingen"
+      }
+    },
+    "playlist": {
+      "name": "Spellista |||| Spellistor",
+      "fields": {
+        "name": "Namn",
+        "duration": "Längd",
+        "ownerName": "Ägare",
+        "public": "Offentlig",
+        "updatedAt": "Uppdaterad",
+        "createdAt": "Skapad",
+        "songCount": "Låtar",
+        "comment": "Kommentar",
+        "sync": "Automatisk import",
+        "path": "Importera från",
+        "starred": "Favorit"
+      },
+      "actions": {
+        "selectPlaylist": "Välj en spellista:",
+        "addNewPlaylist": "Skapa \"%{name}\"",
+        "export": "Exportera",
+        "makePublic": "Gör offentlig",
+        "makePrivate": "Gör privat",
+        "saveQueue": "Spara kön i en spellista",
+        "searchOrCreate": "Sök spellistor eller skriv för att skapa en ny...",
+        "pressEnterToCreate": "Tryck på Enter för att skapa en ny spellista",
+        "removeFromSelection": "Ta bort från urvalet"
+      },
+      "message": {
+        "duplicate_song": "Lägg till dubbletter",
+        "song_exist": "Du håller på att lägga till dubbletter i spellistan. Vill du lägga till dem eller hoppa över dem?",
+        "noPlaylistsFound": "Inga spellistor hittades",
+        "noPlaylists": "Inga spellistor tillgängliga"
+      }
+    },
+    "radio": {
+      "name": "Radiostation |||| Radiostationer",
+      "fields": {
+        "name": "Namn",
+        "streamUrl": "Strömmens URL",
+        "homePageUrl": "Webbplatsens URL",
+        "updatedAt": "Uppdaterad",
+        "createdAt": "Skapad"
+      },
+      "actions": {
+        "playNow": "Spela nu"
+      }
+    },
+    "share": {
+      "name": "Delning |||| Delningar",
+      "fields": {
+        "username": "Delad av",
+        "url": "URL",
+        "description": "Beskrivning",
+        "contents": "Innehåll",
+        "expiresAt": "Giltig till",
+        "lastVisitedAt": "Senast besökt",
+        "visitCount": "Besök",
+        "format": "Format",
+        "maxBitRate": "Högsta bithastighet",
+        "updatedAt": "Uppdaterad",
+        "createdAt": "Skapad",
+        "downloadable": "Tillåt nedladdningar?"
+      },
+      "notifications": {},
+      "actions": {}
+    },
+    "missing": {
+      "name": "Saknad fil |||| Saknade filer",
+      "fields": {
+        "path": "Sökväg",
+        "size": "Storlek",
+        "updatedAt": "Försvann",
+        "libraryName": "Bibliotek"
+      },
+      "actions": {
+        "remove": "Ta bort",
+        "remove_all": "Ta bort alla"
+      },
+      "notifications": {
+        "removed": "Saknade filer har tagits bort"
+      },
+      "empty": "Inga saknade filer"
+    },
+    "library": {
+      "name": "Bibliotek |||| Bibliotek",
+      "fields": {
+        "name": "Namn",
+        "path": "Sökväg",
+        "remotePath": "Fjärrsökväg",
+        "lastScanAt": "Senaste skanning",
+        "songCount": "Låtar",
+        "albumCount": "Album",
+        "artistCount": "Artister",
+        "totalSongs": "Låtar",
+        "totalAlbums": "Album",
+        "totalArtists": "Artister",
+        "totalFolders": "Mappar",
+        "totalFiles": "Filer",
+        "totalMissingFiles": "Saknade filer",
+        "totalSize": "Sammanlagd storlek",
+        "totalDuration": "Längd",
+        "defaultNewUsers": "Standard för nya användare",
+        "createdAt": "Skapad",
+        "updatedAt": "Uppdaterad"
+      },
+      "sections": {
+        "basic": "Grundinformation",
+        "statistics": "Statistik"
+      },
+      "actions": {
+        "scan": "Skanna biblioteket",
+        "manageUsers": "Hantera användaråtkomst",
+        "viewDetails": "Visa detaljer",
+        "quickScan": "Snabbskanning",
+        "fullScan": "Fullständig skanning"
+      },
+      "notifications": {
+        "created": "Biblioteket har skapats",
+        "updated": "Biblioteket har uppdaterats",
+        "deleted": "Biblioteket har tagits bort",
+        "scanStarted": "Skanning av biblioteket har startat",
+        "scanCompleted": "Skanning av biblioteket är klar",
+        "quickScanStarted": "Snabbskanning har startat",
+        "fullScanStarted": "Fullständig skanning har startat",
+        "scanError": "Kunde inte starta skanningen. Kontrollera loggarna"
+      },
+      "validation": {
+        "nameRequired": "Ange ett biblioteksnamn",
+        "pathRequired": "Ange en sökväg till biblioteket",
+        "pathNotDirectory": "Bibliotekets sökväg måste peka på en katalog",
+        "pathNotFound": "Bibliotekets sökväg hittades inte",
+        "pathNotAccessible": "Bibliotekets sökväg är inte åtkomlig",
+        "pathInvalid": "Ogiltig sökväg till biblioteket"
+      },
+      "messages": {
+        "deleteConfirm": "Är du säker på att du vill ta bort det här biblioteket? Alla tillhörande data och användarnas åtkomst till biblioteket tas bort.",
+        "scanInProgress": "Skanning pågår...",
+        "noLibrariesAssigned": "Inga bibliotek har tilldelats den här användaren"
+      }
+    },
+    "plugin": {
+      "name": "Tillägg |||| Tillägg",
+      "fields": {
+        "id": "ID",
+        "name": "Namn",
+        "description": "Beskrivning",
+        "version": "Version",
+        "author": "Upphovsperson",
+        "website": "Webbplats",
+        "permissions": "Behörigheter",
+        "enabled": "Aktiverat",
+        "status": "Status",
+        "path": "Sökväg",
+        "lastError": "Fel",
+        "hasError": "Fel",
+        "updatedAt": "Uppdaterat",
+        "createdAt": "Installerat",
+        "configKey": "Nyckel",
+        "configValue": "Värde",
+        "allUsers": "Tillåt alla användare",
+        "selectedUsers": "Valda användare",
+        "allLibraries": "Tillåt alla bibliotek",
+        "selectedLibraries": "Valda bibliotek",
+        "allowWriteAccess": "Tillåt skrivåtkomst"
+      },
+      "sections": {
+        "status": "Status",
+        "info": "Information om tillägget",
+        "configuration": "Konfiguration",
+        "manifest": "Manifest",
+        "usersPermission": "Åtkomst till användare",
+        "libraryPermission": "Åtkomst till bibliotek"
+      },
+      "status": {
+        "enabled": "Aktiverat",
+        "disabled": "Inaktiverat"
+      },
+      "actions": {
+        "enable": "Aktivera",
+        "disable": "Inaktivera",
+        "disabledDueToError": "Åtgärda felet före aktivering",
+        "disabledUsersRequired": "Välj användare före aktivering",
+        "disabledLibrariesRequired": "Välj bibliotek före aktivering",
+        "addConfig": "Lägg till konfiguration",
+        "rescan": "Skanna om"
+      },
+      "notifications": {
+        "enabled": "Tillägg aktiverat",
+        "disabled": "Tillägg inaktiverat",
+        "updated": "Tillägg uppdaterat",
+        "error": "Fel vid uppdatering av tillägg"
+      },
+      "validation": {
+        "invalidJson": "Konfigurationen måste vara giltig JSON"
+      },
+      "messages": {
+        "configHelp": "Konfigurera tillägget med nyckel–värde-par. Lämna tomt om tillägget inte kräver någon konfiguration.",
+        "clickPermissions": "Klicka på en behörighet för mer information",
+        "noConfig": "Ingen konfiguration angiven",
+        "allUsersHelp": "När alternativet är aktiverat får tillägget åtkomst till alla användare, även de som skapas i framtiden.",
+        "noUsers": "Inga användare valda",
+        "permissionReason": "Orsak",
+        "usersRequired": "Det här tillägget behöver åtkomst till användarinformation. Välj vilka användare tillägget får åtkomst till eller aktivera 'Tillåt alla användare'.",
+        "allLibrariesHelp": "När alternativet är aktiverat får tillägget åtkomst till alla bibliotek, även de som skapas i framtiden.",
+        "noLibraries": "Inga bibliotek valda",
+        "librariesRequired": "Det här tillägget behöver åtkomst till biblioteksinformation. Välj vilka bibliotek tillägget får åtkomst till eller aktivera 'Tillåt alla bibliotek'.",
+        "requiredHosts": "Värdar som krävs",
+        "configValidationError": "Validering av konfigurationen misslyckades:",
+        "schemaRenderError": "Kunde inte visa konfigurationsformuläret. Tilläggets schema kan vara ogiltigt.",
+        "allowWriteAccessHelp": "När alternativet är aktiverat kan tillägget ändra filer i bibliotekens kataloger. Som standard har tillägg endast läsåtkomst.",
+        "idHelp": "Tilläggets ID hämtas från filnamnet. Använd det när du hänvisar till tillägget i konfigurationsalternativ, till exempel Agents."
+      },
+      "placeholders": {
+        "configKey": "nyckel",
+        "configValue": "värde"
+      }
+    }
+  },
+  "ra": {
+    "auth": {
+      "welcome1": "Tack för att du installerade Navidrome!",
+      "welcome2": "Börja med att skapa ett administratörskonto",
+      "confirmPassword": "Bekräfta lösenord",
+      "buttonCreateAdmin": "Skapa administratörskonto",
+      "auth_check_error": "Logga in för att fortsätta",
+      "user_menu": "Profil",
+      "username": "Användarnamn",
+      "password": "Lösenord",
+      "sign_in": "Logga in",
+      "sign_in_error": "Inloggningen misslyckades. Försök igen",
+      "logout": "Logga ut",
+      "insightsCollectionNote": "Navidrome samlar in anonyma användningsdata för\natt förbättra projektet. Klicka [här] för att läsa mer\noch välja bort insamlingen"
+    },
+    "validation": {
+      "invalidChars": "Använd enbart bokstäver och siffror",
+      "passwordDoesNotMatch": "Lösenorden stämmer inte överens",
+      "required": "Obligatoriskt",
+      "minLength": "Måste innehålla minst %{min} tecken",
+      "maxLength": "Får innehålla högst %{max} tecken",
+      "minValue": "Måste vara minst %{min}",
+      "maxValue": "Får vara högst %{max}",
+      "number": "Måste vara ett tal",
+      "email": "Måste vara en giltig e-postadress",
+      "oneOf": "Måste vara något av: %{options}",
+      "regex": "Måste matcha det reguljära uttrycket: %{pattern}",
+      "unique": "Måste vara unikt",
+      "url": "Måste vara en giltig URL"
+    },
+    "action": {
+      "add_filter": "Lägg till filter",
+      "add": "Lägg till",
+      "back": "Tillbaka",
+      "bulk_actions": "1 objekt valt |||| %{smart_count} objekt valda",
+      "cancel": "Avbryt",
+      "clear_input_value": "Rensa värdet",
+      "clone": "Klona",
+      "confirm": "Bekräfta",
+      "create": "Skapa",
+      "delete": "Ta bort",
+      "edit": "Redigera",
+      "export": "Exportera",
+      "list": "Lista",
+      "refresh": "Uppdatera",
+      "remove_filter": "Ta bort det här filtret",
+      "remove": "Ta bort",
+      "save": "Spara",
+      "search": "Sök",
+      "show": "Visa",
+      "sort": "Sortera",
+      "undo": "Ångra",
+      "expand": "Expandera",
+      "close": "Stäng",
+      "open_menu": "Öppna meny",
+      "close_menu": "Stäng meny",
+      "unselect": "Avmarkera",
+      "skip": "Hoppa över",
+      "bulk_actions_mobile": "1 |||| %{smart_count}",
+      "share": "Dela",
+      "download": "Ladda ner"
+    },
+    "boolean": {
+      "true": "Ja",
+      "false": "Nej"
+    },
+    "page": {
+      "create": "Skapa %{name}",
+      "dashboard": "Översikt",
+      "edit": "%{name} #%{id}",
+      "error": "Ett fel uppstod",
+      "list": "%{name}",
+      "loading": "Läser in",
+      "not_found": "Hittades inte",
+      "show": "%{name} #%{id}",
+      "empty": "%{name}: inga poster ännu.",
+      "invite": "Vill du lägga till något?"
+    },
+    "input": {
+      "file": {
+        "upload_several": "Dra och släpp filer som ska laddas upp eller klicka för att välja dem.",
+        "upload_single": "Dra och släpp en fil som ska laddas upp eller klicka för att välja en fil."
+      },
+      "image": {
+        "upload_several": "Dra och släpp bilder som ska laddas upp eller klicka för att välja dem.",
+        "upload_single": "Dra och släpp en bild som ska laddas upp eller klicka för att välja en bild."
+      },
+      "references": {
+        "all_missing": "Kunde inte hitta referensdata.",
+        "many_missing": "Minst en av de kopplade referenserna verkar inte längre vara tillgänglig.",
+        "single_missing": "Den kopplade referensen verkar inte längre vara tillgänglig."
+      },
+      "password": {
+        "toggle_visible": "Dölj lösenord",
+        "toggle_hidden": "Visa lösenord"
+      }
+    },
+    "message": {
+      "about": "Om",
+      "are_you_sure": "Är du säker?",
+      "bulk_delete_content": "Vill du verkligen ta bort %{name}? |||| Vill du verkligen ta bort dessa %{smart_count} objekt?",
+      "bulk_delete_title": "Ta bort %{name} |||| Ta bort %{smart_count} %{name}",
+      "delete_content": "Vill du verkligen ta bort det här objektet?",
+      "delete_title": "Ta bort %{name} #%{id}",
+      "details": "Detaljer",
+      "error": "Ett klientfel uppstod och begäran kunde inte slutföras.",
+      "invalid_form": "Formuläret innehåller fel. Kontrollera uppgifterna",
+      "loading": "Sidan läses in. Vänta ett ögonblick",
+      "no": "Nej",
+      "not_found": "Antingen skrev du fel URL eller så följde du en ogiltig länk.",
+      "yes": "Ja",
+      "unsaved_changes": "Vissa ändringar har inte sparats. Vill du verkligen ignorera dem?"
+    },
+    "navigation": {
+      "no_results": "Inga resultat hittades",
+      "no_more_results": "Sidnumret %{page} finns inte. Gå tillbaka till föregående sida.",
+      "page_out_of_boundaries": "Sidnumret %{page} finns inte",
+      "page_out_from_end": "Det finns inga fler sidor",
+      "page_out_from_begin": "Det finns ingen sida före sida 1",
+      "page_range_info": "%{offsetBegin}-%{offsetEnd} av %{total}",
+      "page_rows_per_page": "Objekt per sida:",
+      "next": "Nästa",
+      "prev": "Föregående",
+      "skip_nav": "Hoppa till innehåll"
+    },
+    "notification": {
+      "updated": "Objekt uppdaterat |||| %{smart_count} objekt uppdaterade",
+      "created": "Objekt skapat",
+      "deleted": "Objekt borttaget |||| %{smart_count} objekt borttagna",
+      "bad_item": "Felaktigt objekt",
+      "item_doesnt_exist": "Objektet finns inte",
+      "http_error": "Kommunikationsfel med servern",
+      "data_provider_error": "Fel i dataProvider. Kontrollera webbläsarens konsol för mer information.",
+      "i18n_error": "Kunde inte läsa in översättningarna för det valda språket",
+      "canceled": "Åtgärden avbröts",
+      "logged_out": "Sessionen har avslutats. Logga in igen.",
+      "new_version": "En ny version finns tillgänglig! Ladda om det här fönstret."
+    },
+    "toggleFieldsMenu": {
+      "columnsToDisplay": "Kolumner att visa",
+      "layout": "Layout",
+      "grid": "Rutnät",
+      "table": "Tabell"
+    }
+  },
+  "message": {
+    "note": "OBSERVERA",
+    "transcodingDisabled": "Av säkerhetsskäl går det inte att ändra omkodningsinställningarna i webbgränssnittet. Starta om servern med konfigurationsalternativet %{config} för att redigera eller lägga till omkodningsinställningar.",
+    "transcodingEnabled": "Navidrome körs med %{config}. Det gör det möjligt att köra systemkommandon via omkodningsinställningarna i webbgränssnittet. Av säkerhetsskäl rekommenderar vi att alternativet är inaktiverat och bara aktiveras när omkodningen ska konfigureras.",
+    "songsAddedToPlaylist": "1 låt har lagts till i spellistan |||| %{smart_count} låtar har lagts till i spellistan",
+    "noPlaylistsAvailable": "Inga tillgängliga",
+    "delete_user_title": "Ta bort användaren '%{name}'",
+    "delete_user_content": "Är du säker på att du vill ta bort den här användaren och alla användarens data, inklusive spellistor och inställningar?",
+    "notifications_blocked": "Du har blockerat aviseringar från den här webbplatsen i webbläsarens inställningar",
+    "notifications_not_available": "Webbläsaren stöder inte skrivbordsaviseringar, eller så ansluter du inte till Navidrome via HTTPS",
+    "lastfmLinkSuccess": "Last.fm har kopplats och scrobbling har aktiverats",
+    "lastfmLinkFailure": "Det gick inte att koppla Last.fm",
+    "lastfmUnlinkSuccess": "Kopplingen till Last.fm har tagits bort och scrobbling har inaktiverats",
+    "lastfmUnlinkFailure": "Det gick inte att ta bort kopplingen till Last.fm",
+    "openIn": {
+      "lastfm": "Öppna i Last.fm",
+      "musicbrainz": "Öppna i MusicBrainz"
+    },
+    "lastfmLink": "Läs mer...",
+    "listenBrainzLinkSuccess": "ListenBrainz har kopplats och scrobbling har aktiverats för användaren: %{user}",
+    "listenBrainzLinkFailure": "Det gick inte att koppla ListenBrainz: %{error}",
+    "listenBrainzUnlinkSuccess": "Kopplingen till ListenBrainz har tagits bort och scrobbling har inaktiverats",
+    "listenBrainzUnlinkFailure": "Det gick inte att ta bort kopplingen till ListenBrainz",
+    "downloadOriginalFormat": "Ladda ner i originalformat",
+    "shareOriginalFormat": "Dela i originalformat",
+    "shareDialogTitle": "Dela %{resource} '%{name}'",
+    "shareBatchDialogTitle": "Dela 1 %{resource} |||| Dela %{smart_count} %{resource}",
+    "shareSuccess": "URL:en har kopierats till urklipp: %{url}",
+    "shareFailure": "Kunde inte kopiera URL:en %{url} till urklipp",
+    "downloadDialogTitle": "Ladda ner %{resource} '%{name}' (%{size})",
+    "shareCopyToClipboard": "Kopiera till urklipp: Ctrl+C, Enter",
+    "remove_missing_title": "Ta bort saknade filer",
+    "remove_missing_content": "Är du säker på att du vill ta bort de valda saknade filerna från databasen? Alla referenser till dem, inklusive antal spelningar och betyg, tas bort permanent.",
+    "remove_all_missing_title": "Ta bort alla saknade filer",
+    "remove_all_missing_content": "Är du säker på att du vill ta bort alla saknade filer från databasen? Alla referenser till dem, inklusive antal spelningar och betyg, tas bort permanent.",
+    "noSimilarSongsFound": "Hittade inga liknande låtar",
+    "noTopSongsFound": "Hittade inga topplåtar",
+    "startingInstantMix": "Laddar direktmix...",
+    "uploadCover": "Ladda upp omslagsbild",
+    "removeCover": "Ta bort omslagsbild",
+    "coverUploaded": "Omslagsbild uppdaterad",
+    "coverRemoved": "Omslagsbild borttagen",
+    "coverUploadError": "Fel vid uppladdning av omslagsbild",
+    "coverRemoveError": "Fel vid borttagning av omslagsbild",
+    "metadataRefreshStarted": "Metadata uppdateras i bakgrunden",
+    "quickConnectApproved": "%{app} på %{device} är nu inloggad",
+    "quickConnectInvalidCode": "Koden är ogiltig eller har gått ut",
+    "quickConnectError": "Kunde inte godkänna koden"
+  },
+  "menu": {
+    "library": "Bibliotek",
+    "settings": "Inställningar",
+    "version": "Version",
+    "theme": "Tema",
+    "personal": {
+      "name": "Personligt",
+      "options": {
+        "theme": "Tema",
+        "language": "Språk",
+        "defaultView": "Standardvy",
+        "desktop_notifications": "Skrivbordsaviseringar",
+        "lastfmScrobbling": "Scrobbla till Last.fm",
+        "listenBrainzScrobbling": "Scrobbla till ListenBrainz",
+        "replaygain": "ReplayGain-läge",
+        "preAmp": "Förförstärkning för ReplayGain (dB)",
+        "gain": {
+          "none": "Inaktiverad",
+          "album": "Använd albumets volymjustering",
+          "track": "Använd låtens volymjustering"
+        },
+        "lastfmNotConfigured": "API-nyckeln för Last.fm är inte konfigurerad"
+      }
+    },
+    "albumList": "Album",
+    "about": "Om",
+    "playlists": "Spellistor",
+    "sharedPlaylists": "Delade spellistor",
+    "librarySelector": {
+      "allLibraries": "Alla bibliotek (%{count})",
+      "multipleLibraries": "%{selected} av %{total} bibliotek",
+      "selectLibraries": "Välj bibliotek",
+      "none": "Inga"
+    },
+    "quickConnect": {
+      "name": "Snabbanslutning",
+      "code": "Kod",
+      "help": "Ange koden som visas i en Jellyfin-app för att logga in på ditt konto i appen",
+      "confirm": "Vill du logga in med ditt konto i %{app} %{version} på %{device}?",
+      "continue": "Fortsätt",
+      "approve": "Godkänn"
+    },
+    "onlyFavourites": "Visa endast favoriter"
+  },
+  "player": {
+    "playListsText": "Uppspelningskö",
+    "openText": "Öppna",
+    "closeText": "Stäng",
+    "notContentText": "Ingen musik",
+    "clickToPlayText": "Klicka för att spela",
+    "clickToPauseText": "Klicka för att pausa",
+    "nextTrackText": "Nästa låt",
+    "previousTrackText": "Föregående låt",
+    "reloadText": "Ladda om",
+    "volumeText": "Volym",
+    "toggleLyricText": "Visa eller dölj låttexten",
+    "toggleMiniModeText": "Minimera",
+    "destroyText": "Stäng spelaren och rensa kön",
+    "downloadText": "Ladda ner",
+    "removeAudioListsText": "Rensa kön",
+    "clickToDeleteText": "Klicka för att ta bort %{name}",
+    "emptyLyricText": "Ingen låttext",
+    "playModeText": {
+      "order": "I ordningsföljd",
+      "orderLoop": "Upprepa alla",
+      "singleLoop": "Upprepa en låt",
+      "shufflePlay": "Blanda"
+    }
+  },
+  "about": {
+    "links": {
+      "homepage": "Webbplats",
+      "source": "Källkod",
+      "featureRequests": "Förslag på nya funktioner",
+      "lastInsightsCollection": "Senaste insamling av användningsdata",
+      "insights": {
+        "disabled": "Inaktiverad",
+        "waiting": "Väntar"
+      }
+    },
+    "tabs": {
+      "about": "Om",
+      "config": "Konfiguration"
+    },
+    "config": {
+      "configName": "Inställning",
+      "environmentVariable": "Miljövariabel",
+      "currentValue": "Aktuellt värde",
+      "configurationFile": "Konfigurationsfil",
+      "exportToml": "Exportera konfiguration (TOML)",
+      "exportSuccess": "Konfigurationen har kopierats till urklipp i TOML-format",
+      "exportFailed": "Kunde inte kopiera konfigurationen",
+      "devFlagsHeader": "Utvecklingsflaggor (kan ändras eller tas bort)",
+      "devFlagsComment": "Dessa inställningar är experimentella och kan tas bort i framtida versioner",
+      "downloadToml": "Ladda ner konfiguration (TOML)"
+    }
+  },
+  "activity": {
+    "title": "Aktivitet",
+    "totalScanned": "Skannade mappar totalt",
+    "quickScan": "Snabb",
+    "fullScan": "Fullständig",
+    "serverUptime": "Serverns drifttid",
+    "serverDown": "OFFLINE",
+    "scanType": "Senaste skanning",
+    "status": "Skanningsfel",
+    "elapsedTime": "Förfluten tid",
+    "selectiveScan": "Selektiv"
+  },
+  "help": {
+    "title": "Kortkommandon i Navidrome",
+    "hotkeys": {
+      "show_help": "Visa denna hjälp",
+      "toggle_menu": "Visa eller dölj sidomenyn",
+      "toggle_play": "Spela / pausa",
+      "prev_song": "Föregående låt",
+      "next_song": "Nästa låt",
+      "vol_up": "Höj volymen",
+      "vol_down": "Sänk volymen",
+      "toggle_love": "Lägg till låten i favoriter",
+      "current_song": "Gå till aktuell låt"
+    }
+  },
+  "nowPlaying": {
+    "title": "Spelas nu",
+    "empty": "Inget spelas",
+    "minutesAgo": "%{smart_count} minut sedan |||| %{smart_count} minuter sedan"
+  }
+}

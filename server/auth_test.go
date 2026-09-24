@@ -1,0 +1,561 @@
+package server
+
+import (
+	"context"
+	"crypto/md5"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/navidrome/navidrome/conf"
+	"github.com/navidrome/navidrome/conf/configtest"
+	"github.com/navidrome/navidrome/consts"
+	"github.com/navidrome/navidrome/core/auth"
+	"github.com/navidrome/navidrome/log"
+	"github.com/navidrome/navidrome/model"
+	"github.com/navidrome/navidrome/model/id"
+	"github.com/navidrome/navidrome/model/request"
+	"github.com/navidrome/navidrome/tests"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
+)
+
+var _ = Describe("Auth", func() {
+	Describe("User login", func() {
+		var ds model.DataStore
+		var req *http.Request
+		var resp *httptest.ResponseRecorder
+
+		BeforeEach(func() {
+			ds = &tests.MockDataStore{}
+			auth.Init(ds)
+		})
+
+		Describe("createAdmin", func() {
+			var createdAt time.Time
+			BeforeEach(func() {
+				req = httptest.NewRequest("POST", "/createAdmin", strings.NewReader(`{"username":"johndoe", "password":"secret"}`))
+				resp = httptest.NewRecorder()
+				createdAt = time.Now()
+				createAdmin(ds)(resp, req)
+			})
+
+			It("creates an admin user with the specified password", func() {
+				usr := ds.User(context.Background())
+				u, err := usr.FindByUsername("johndoe")
+				Expect(err).To(BeNil())
+				Expect(u.Password).ToNot(BeEmpty())
+				Expect(u.IsAdmin).To(BeTrue())
+				Expect(*u.LastLoginAt).To(BeTemporally(">=", createdAt, time.Second))
+			})
+
+			It("returns the expected payload", func() {
+				Expect(resp.Code).To(Equal(http.StatusOK))
+				var parsed map[string]any
+				Expect(json.Unmarshal(resp.Body.Bytes(), &parsed)).To(BeNil())
+				Expect(parsed["isAdmin"]).To(Equal(true))
+				Expect(parsed["username"]).To(Equal("johndoe"))
+				Expect(parsed["name"]).To(Equal("Johndoe"))
+				Expect(parsed["id"]).ToNot(BeEmpty())
+				Expect(parsed["token"]).ToNot(BeEmpty())
+			})
+		})
+
+		Describe("createAdminUser", func() {
+			It("returns the error when the user cannot be saved", func() {
+				ds = &tests.MockDataStore{MockedUser: &tests.MockedUserRepo{Error: errors.New("db is down")}}
+				err := createAdminUser(context.Background(), ds, "johndoe", "secret")
+				Expect(err).To(MatchError(ContainSubstring("db is down")))
+			})
+		})
+
+		Describe("createAdmin when the user cannot be stored", func() {
+			It("responds 500 rather than falling through to login", func() {
+				failing := dsWithFailingPut(errors.New("db is down"))
+				req = httptest.NewRequest("POST", "/createAdmin", strings.NewReader(`{"username":"johndoe", "password":"secret"}`))
+				resp = httptest.NewRecorder()
+
+				createAdmin(failing)(resp, req)
+
+				Expect(resp.Code).To(Equal(http.StatusInternalServerError))
+			})
+		})
+
+		Describe("Login from HTTP headers", func() {
+			const (
+				trustedIpv4   = "192.168.0.42"
+				untrustedIpv4 = "8.8.8.8"
+				trustedIpv6   = "2001:4860:4860:1234:5678:0000:4242:8888"
+				untrustedIpv6 = "5005:0:3003"
+			)
+
+			fs := os.DirFS("tests/fixtures")
+
+			BeforeEach(func() {
+				usr := ds.User(context.Background())
+				_ = usr.Put(&model.User{ID: "111", UserName: "janedoe", NewPassword: "abc123", Name: "Jane", IsAdmin: false})
+				req = httptest.NewRequest("GET", "/index.html", nil)
+				req.Header.Add("Remote-User", "janedoe")
+				resp = httptest.NewRecorder()
+				conf.Server.UILoginBackgroundURL = ""
+				conf.Server.ExtAuth.TrustedSources = "192.168.0.0/16,2001:4860:4860::/48"
+			})
+
+			It("sets auth data if IPv4 matches whitelist", func() {
+				req = req.WithContext(request.WithReverseProxyIp(req.Context(), trustedIpv4))
+				serveIndex(ds, fs, nil)(resp, req)
+
+				config := extractAppConfig(resp.Body.String())
+				parsed := config["auth"].(map[string]any)
+
+				Expect(parsed["id"]).To(Equal("111"))
+			})
+
+			It("sets no auth data if IPv4 does not match whitelist", func() {
+				req = req.WithContext(request.WithReverseProxyIp(req.Context(), untrustedIpv4))
+				serveIndex(ds, fs, nil)(resp, req)
+
+				config := extractAppConfig(resp.Body.String())
+				Expect(config["auth"]).To(BeNil())
+			})
+
+			It("sets auth data if IPv6 matches whitelist", func() {
+				req = req.WithContext(request.WithReverseProxyIp(req.Context(), trustedIpv6))
+				serveIndex(ds, fs, nil)(resp, req)
+
+				config := extractAppConfig(resp.Body.String())
+				parsed := config["auth"].(map[string]any)
+
+				Expect(parsed["id"]).To(Equal("111"))
+			})
+
+			It("sets no auth data if IPv6 does not match whitelist", func() {
+				req = req.WithContext(request.WithReverseProxyIp(req.Context(), untrustedIpv6))
+				serveIndex(ds, fs, nil)(resp, req)
+
+				config := extractAppConfig(resp.Body.String())
+				Expect(config["auth"]).To(BeNil())
+			})
+
+			It("creates user and sets auth data if user does not exist", func() {
+				newUser := "NEW_USER_" + id.NewRandom()
+
+				req = req.WithContext(request.WithReverseProxyIp(req.Context(), trustedIpv4))
+				req.Header.Set("Remote-User", newUser)
+				serveIndex(ds, fs, nil)(resp, req)
+
+				config := extractAppConfig(resp.Body.String())
+				parsed := config["auth"].(map[string]any)
+
+				Expect(parsed["username"]).To(Equal(newUser))
+			})
+
+			It("sets auth data if user exists", func() {
+				req = req.WithContext(request.WithReverseProxyIp(req.Context(), trustedIpv4))
+				serveIndex(ds, fs, nil)(resp, req)
+
+				config := extractAppConfig(resp.Body.String())
+				parsed := config["auth"].(map[string]any)
+
+				Expect(parsed["id"]).To(Equal("111"))
+				Expect(parsed["isAdmin"]).To(BeFalse())
+				Expect(parsed["name"]).To(Equal("Jane"))
+				Expect(parsed["username"]).To(Equal("janedoe"))
+				Expect(parsed["subsonicSalt"]).ToNot(BeEmpty())
+				Expect(parsed["subsonicToken"]).ToNot(BeEmpty())
+				salt := parsed["subsonicSalt"].(string)
+				token := fmt.Sprintf("%x", md5.Sum([]byte("abc123"+salt)))
+				Expect(parsed["subsonicToken"]).To(Equal(token))
+
+				// Request Header authentication should not generate a JWT token
+				Expect(parsed).ToNot(HaveKey("token"))
+			})
+
+			It("does not set auth data when listening on unix socket without whitelist", func() {
+				conf.Server.Address = "unix:/tmp/navidrome-test"
+				conf.Server.ExtAuth.TrustedSources = ""
+
+				// No ReverseProxyIp in request context
+				serveIndex(ds, fs, nil)(resp, req)
+
+				config := extractAppConfig(resp.Body.String())
+				Expect(config["auth"]).To(BeNil())
+			})
+
+			It("does not set auth data when listening on unix socket with incorrect whitelist", func() {
+				conf.Server.Address = "unix:/tmp/navidrome-test"
+
+				req = req.WithContext(request.WithReverseProxyIp(req.Context(), "@"))
+				serveIndex(ds, fs, nil)(resp, req)
+
+				config := extractAppConfig(resp.Body.String())
+				Expect(config["auth"]).To(BeNil())
+			})
+
+			It("sets auth data when listening on unix socket with correct whitelist", func() {
+				conf.Server.Address = "unix:/tmp/navidrome-test"
+				conf.Server.ExtAuth.TrustedSources = conf.Server.ExtAuth.TrustedSources + ",@"
+
+				req = req.WithContext(request.WithReverseProxyIp(req.Context(), "@"))
+				serveIndex(ds, fs, nil)(resp, req)
+
+				config := extractAppConfig(resp.Body.String())
+				parsed := config["auth"].(map[string]any)
+
+				Expect(parsed["id"]).To(Equal("111"))
+			})
+		})
+
+		Describe("login", func() {
+			BeforeEach(func() {
+				req = httptest.NewRequest("POST", "/login", strings.NewReader(`{"username":"janedoe", "password":"abc123"}`))
+				resp = httptest.NewRecorder()
+			})
+
+			It("fails if user does not exist", func() {
+				login(ds)(resp, req)
+				Expect(resp.Code).To(Equal(http.StatusUnauthorized))
+			})
+
+			It("rejects a request body larger than the limit", func() {
+				body := `{"username":"janedoe", "password":"abc123", "padding":"` + strings.Repeat("x", MaxLoginBodySize) + `"}`
+				req = httptest.NewRequest("POST", "/login", strings.NewReader(body))
+				LimitLoginBody(http.HandlerFunc(login(ds))).ServeHTTP(resp, req)
+				Expect(resp.Code).To(Equal(http.StatusUnprocessableEntity))
+			})
+
+			It("logs in successfully if user exists", func() {
+				usr := ds.User(context.Background())
+				_ = usr.Put(&model.User{ID: "111", UserName: "janedoe", NewPassword: "abc123", Name: "Jane", IsAdmin: false})
+
+				login(ds)(resp, req)
+				Expect(resp.Code).To(Equal(http.StatusOK))
+
+				var parsed map[string]any
+				Expect(json.Unmarshal(resp.Body.Bytes(), &parsed)).To(BeNil())
+				Expect(parsed["isAdmin"]).To(Equal(false))
+				Expect(parsed["username"]).To(Equal("janedoe"))
+				Expect(parsed["name"]).To(Equal("Jane"))
+				Expect(parsed["id"]).ToNot(BeEmpty())
+				Expect(parsed["token"]).ToNot(BeEmpty())
+			})
+		})
+	})
+
+	Describe("UsernameFromExtAuthHeader", func() {
+		var hook *test.Hook
+		var r *http.Request
+
+		BeforeEach(func() {
+			conf.Server.ExtAuth.TrustedSources = "192.168.0.0/16"
+			prevLevel := log.CurrentLevel()
+			l, h := test.NewNullLogger()
+			hook = h
+			prevLogger := log.SetDefaultLogger(l)
+			log.SetLevel(log.LevelWarn)
+			DeferCleanup(func() {
+				log.SetDefaultLogger(prevLogger)
+				log.SetLevel(prevLevel)
+			})
+			r = httptest.NewRequest("GET", "/", nil)
+		})
+
+		warnings := func() []*logrus.Entry {
+			var ws []*logrus.Entry
+			for _, e := range hook.AllEntries() {
+				if e.Level == logrus.WarnLevel {
+					ws = append(ws, e)
+				}
+			}
+			return ws
+		}
+
+		It("returns the username from a trusted source", func() {
+			r.Header.Set("Remote-User", "janedoe")
+			r = r.WithContext(request.WithReverseProxyIp(r.Context(), "192.168.0.42"))
+			Expect(UsernameFromExtAuthHeader(r)).To(Equal("janedoe"))
+			Expect(warnings()).To(BeEmpty())
+		})
+
+		It("does not warn when an untrusted source sends no user header", func() {
+			r = r.WithContext(request.WithReverseProxyIp(r.Context(), "8.8.8.8"))
+			Expect(UsernameFromExtAuthHeader(r)).To(BeEmpty())
+			Expect(warnings()).To(BeEmpty())
+		})
+
+		It("warns when an untrusted source sends the user header", func() {
+			r.Header.Set("Remote-User", "janedoe")
+			r = r.WithContext(request.WithReverseProxyIp(r.Context(), "8.8.8.8"))
+			Expect(UsernameFromExtAuthHeader(r)).To(BeEmpty())
+			Expect(warnings()).To(HaveLen(1))
+			Expect(warnings()[0].Message).To(Equal("IP is not whitelisted for external authentication"))
+		})
+	})
+
+	Describe("tokenFromHeader", func() {
+		It("returns the token when the Authorization header is set correctly", func() {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header.Set(consts.UIAuthorizationHeader, "Bearer testtoken")
+
+			token := tokenFromHeader(req)
+			Expect(token).To(Equal("testtoken"))
+		})
+
+		It("returns an empty string when the Authorization header is not set", func() {
+			req := httptest.NewRequest("GET", "/", nil)
+
+			token := tokenFromHeader(req)
+			Expect(token).To(BeEmpty())
+		})
+
+		It("returns an empty string when the Authorization header is not a Bearer token", func() {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header.Set(consts.UIAuthorizationHeader, "Basic testtoken")
+
+			token := tokenFromHeader(req)
+			Expect(token).To(BeEmpty())
+		})
+
+		It("returns an empty string when the Bearer token is too short", func() {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header.Set(consts.UIAuthorizationHeader, "Bearer")
+
+			token := tokenFromHeader(req)
+			Expect(token).To(BeEmpty())
+		})
+	})
+
+	Describe("validateIPAgainstList", func() {
+		Context("when provided with empty inputs", func() {
+			It("should return false", func() {
+				Expect(validateIPAgainstList("", "")).To(BeFalse())
+				Expect(validateIPAgainstList("192.168.1.1", "")).To(BeFalse())
+				Expect(validateIPAgainstList("", "192.168.0.0/16")).To(BeFalse())
+			})
+		})
+
+		Context("when provided with invalid IP inputs", func() {
+			It("should return false", func() {
+				Expect(validateIPAgainstList("invalidIP", "192.168.0.0/16")).To(BeFalse())
+			})
+		})
+
+		Context("when provided with valid inputs", func() {
+			It("should return true when IP is in the list", func() {
+				Expect(validateIPAgainstList("192.168.1.1", "192.168.0.0/16,10.0.0.0/8")).To(BeTrue())
+				Expect(validateIPAgainstList("10.0.0.1", "192.168.0.0/16,10.0.0.0/8")).To(BeTrue())
+			})
+
+			It("should return false when IP is not in the list", func() {
+				Expect(validateIPAgainstList("172.16.0.1", "192.168.0.0/16,10.0.0.0/8")).To(BeFalse())
+			})
+		})
+
+		Context("when provided with invalid CIDR notation in the list", func() {
+			It("should ignore invalid CIDR and return the correct result", func() {
+				Expect(validateIPAgainstList("192.168.1.1", "192.168.0.0/16,invalidCIDR")).To(BeTrue())
+				Expect(validateIPAgainstList("10.0.0.1", "invalidCIDR,10.0.0.0/8")).To(BeTrue())
+				Expect(validateIPAgainstList("172.16.0.1", "192.168.0.0/16,invalidCIDR")).To(BeFalse())
+			})
+		})
+
+		Context("when provided with IP:port format", func() {
+			It("should handle IP:port format correctly", func() {
+				Expect(validateIPAgainstList("192.168.1.1:8080", "192.168.0.0/16,10.0.0.0/8")).To(BeTrue())
+				Expect(validateIPAgainstList("10.0.0.1:1234", "192.168.0.0/16,10.0.0.0/8")).To(BeTrue())
+				Expect(validateIPAgainstList("172.16.0.1:9999", "192.168.0.0/16,10.0.0.0/8")).To(BeFalse())
+			})
+		})
+	})
+
+	Describe("handleLoginFromHeaders", func() {
+		var ds model.DataStore
+		var req *http.Request
+		const trustedIP = "192.168.0.42"
+
+		BeforeEach(func() {
+			ds = &tests.MockDataStore{}
+			req = httptest.NewRequest("GET", "/", nil)
+			req = req.WithContext(request.WithReverseProxyIp(req.Context(), trustedIP))
+			conf.Server.ExtAuth.TrustedSources = "192.168.0.0/16"
+			conf.Server.ExtAuth.UserHeader = "Remote-User"
+		})
+
+		It("makes the first user an admin", func() {
+			// No existing users
+			req.Header.Set("Remote-User", "firstuser")
+			result := handleLoginFromHeaders(ds, req)
+
+			Expect(result).ToNot(BeNil())
+			Expect(result["isAdmin"]).To(BeTrue())
+
+			// Verify user was created as admin
+			u, err := ds.User(context.Background()).FindByUsername("firstuser")
+			Expect(err).To(BeNil())
+			Expect(u.IsAdmin).To(BeTrue())
+		})
+
+		It("does not make subsequent users admins", func() {
+			// Create the first user
+			_ = ds.User(context.Background()).Put(&model.User{
+				ID:       "existing-user-id",
+				UserName: "existinguser",
+				Name:     "Existing User",
+				IsAdmin:  true,
+			})
+
+			// Try to create a second user via proxy header
+			req.Header.Set("Remote-User", "seconduser")
+			result := handleLoginFromHeaders(ds, req)
+
+			Expect(result).ToNot(BeNil())
+			Expect(result["isAdmin"]).To(BeFalse())
+
+			// Verify user was created as non-admin
+			u, err := ds.User(context.Background()).FindByUsername("seconduser")
+			Expect(err).To(BeNil())
+			Expect(u.IsAdmin).To(BeFalse())
+		})
+	})
+
+	Describe("Authenticator token gating", func() {
+		var ds *tests.MockDataStore
+		var usr *model.User
+
+		BeforeEach(func() {
+			DeferCleanup(configtest.SetupConfig())
+			conf.Server.SessionTimeout = time.Hour
+			ds = &tests.MockDataStore{}
+			auth.Init(ds)
+			ur := ds.User(context.TODO()).(*tests.MockedUserRepo)
+			usr = &model.User{ID: "u1", UserName: "johndoe", NewPassword: "pw", TokenEpoch: 2}
+			Expect(ur.Put(usr)).To(Succeed())
+		})
+
+		serve := func(token string) *httptest.ResponseRecorder {
+			r := httptest.NewRequest("GET", "/api/song", nil)
+			r.Header.Set(consts.UIAuthorizationHeader, "Bearer "+token)
+			w := httptest.NewRecorder()
+			handler := JWTVerifier(Authenticator(ds)(http.HandlerFunc(
+				func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
+			)))
+			handler.ServeHTTP(w, r)
+			return w
+		}
+
+		It("accepts a current session token", func() {
+			tokenStr, err := auth.CreateToken(usr)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(serve(tokenStr).Code).To(Equal(http.StatusOK))
+		})
+
+		It("rejects a jellyfin-scoped token", func() {
+			tokenStr, err := auth.CreateAPIToken(usr, auth.AudienceJellyfin)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(serve(tokenStr).Code).To(Equal(http.StatusUnauthorized))
+		})
+
+		It("rejects a token with a stale epoch", func() {
+			tokenStr, err := auth.CreateToken(usr)
+			Expect(err).ToNot(HaveOccurred())
+			usr.TokenEpoch = 3
+			Expect(serve(tokenStr).Code).To(Equal(http.StatusUnauthorized))
+		})
+
+		It("ignores a stray token for someone else when config auto-login resolves the user", func() {
+			conf.Server.DevAutoLoginUsername = usr.UserName
+			tokenStr, err := auth.CreateToken(&model.User{UserName: "someone-else"})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(serve(tokenStr).Code).To(Equal(http.StatusOK))
+		})
+
+		It("rejects a stale-epoch token whose subject differs only in case from the resolved user", func() {
+			tokenStr, err := auth.CreateToken(&model.User{UserName: strings.ToUpper(usr.UserName), TokenEpoch: usr.TokenEpoch})
+			Expect(err).ToNot(HaveOccurred())
+			usr.TokenEpoch = 5
+			Expect(serve(tokenStr).Code).To(Equal(http.StatusUnauthorized))
+		})
+	})
+
+	Describe("JWTRefresher", func() {
+		BeforeEach(func() {
+			DeferCleanup(configtest.SetupConfig())
+			// TouchClaims reads this; left at zero every refreshed token is born expired.
+			conf.Server.SessionTimeout = time.Hour
+			auth.Init(&tests.MockDataStore{})
+		})
+
+		serveWith := func(handler http.HandlerFunc) *httptest.ResponseRecorder {
+			usr := model.User{ID: "u1", UserName: "johndoe", TokenEpoch: 1}
+			tokenStr, err := auth.CreateToken(&usr)
+			Expect(err).ToNot(HaveOccurred())
+
+			r := httptest.NewRequest("GET", "/api/song", nil)
+			r.Header.Set(consts.UIAuthorizationHeader, "Bearer "+tokenStr)
+			w := httptest.NewRecorder()
+			JWTVerifier(JWTRefresher(handler)).ServeHTTP(w, r)
+			return w
+		}
+
+		It("writes a refreshed token when the handler writes a body", func() {
+			w := serveWith(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte("ok"))
+			})
+			Expect(w.Header().Get(consts.UIAuthorizationHeader)).ToNot(BeEmpty())
+		})
+
+		It("writes a refreshed token when the handler writes no body", func() {
+			w := serveWith(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			})
+			Expect(w.Header().Get(consts.UIAuthorizationHeader)).ToNot(BeEmpty())
+		})
+
+		It("picks up an epoch the handler reported", func() {
+			w := serveWith(func(w http.ResponseWriter, r *http.Request) {
+				request.SetTokenEpoch(r.Context(), 42)
+				w.WriteHeader(http.StatusOK)
+			})
+
+			claims, err := auth.Validate(w.Header().Get(consts.UIAuthorizationHeader))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(claims.Epoch).To(Equal(42))
+		})
+
+		It("keeps the original epoch when the handler reports nothing", func() {
+			w := serveWith(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+
+			claims, err := auth.Validate(w.Header().Get(consts.UIAuthorizationHeader))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(claims.Epoch).To(Equal(1))
+		})
+
+		It("propagates Flush to the underlying ResponseWriter", func() {
+			w := serveWith(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.(http.Flusher).Flush()
+			})
+			Expect(w.Flushed).To(BeTrue())
+		})
+
+		It("exposes the underlying ResponseWriter via Unwrap, for http.ResponseController lookups", func() {
+			var unwrapped http.ResponseWriter
+			w := serveWith(func(w http.ResponseWriter, _ *http.Request) {
+				u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+				Expect(ok).To(BeTrue())
+				unwrapped = u.Unwrap()
+				w.WriteHeader(http.StatusOK)
+			})
+			Expect(unwrapped).To(BeIdenticalTo(w))
+		})
+	})
+})
