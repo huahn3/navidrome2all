@@ -18,10 +18,13 @@ vi.mock('@material-ui/core', async () => {
 
 vi.mock('react-admin', () => ({
   useGetOne: vi.fn(),
+  useTranslate: () => (key, opts) => opts?._ || key,
+  useNotify: () => vi.fn(),
 }))
 
 vi.mock('react-redux', () => ({
   useDispatch: vi.fn(),
+  useSelector: vi.fn((selector) => selector({ player: { current: {} } })),
 }))
 
 vi.mock('../common', () => ({
@@ -124,11 +127,12 @@ describe('<PlayerToolbar />', () => {
 
       // Each button should be in its own list item, plus the volume row
       const listItems = screen.getAllByRole('listitem')
-      expect(listItems).toHaveLength(4)
+      expect(listItems).toHaveLength(5)
 
       // Verify buttons are rendered
       expect(screen.getByTestId('save-queue-button')).toBeInTheDocument()
       expect(screen.getByTestId('love-button')).toBeInTheDocument()
+      expect(screen.getByTestId('translate-lyrics-button')).toBeInTheDocument()
       expect(screen.getByTestId('device-selector')).toBeInTheDocument()
 
       // The volume row comes first and spans the whole line
@@ -136,6 +140,7 @@ describe('<PlayerToolbar />', () => {
       expect(listItems[1].className).toContain('mobileListItem')
       expect(listItems[2].className).toContain('mobileListItem')
       expect(listItems[3].className).toContain('mobileListItem')
+      expect(listItems[4].className).toContain('mobileListItem')
       expect(screen.getByTestId('volume-control')).toBeInTheDocument()
     })
 

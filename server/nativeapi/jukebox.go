@@ -122,7 +122,9 @@ func (api *Router) jukeboxPlay(w http.ResponseWriter, r *http.Request) {
 		mediaPath = mediaFile.Path
 	}
 
-	streamURL := absoluteRequestURL(r, payload.StreamURL)
+	// A client-provided URL is only made absolute through publicurl, so a reverse
+	// proxy base path or BaseUrl is honoured instead of trusting the Host header.
+	streamURL := clientStreamURL(r, payload.StreamURL)
 	if streamURL == "" && payload.SongID != "" {
 		user, ok := request.UserFrom(ctx)
 		if !ok {
@@ -234,6 +236,18 @@ func jukeboxStreamURL(r *http.Request, username, password, songID string) string
 	return streamURL
 }
 
+// clientStreamURL normalizes a stream URL supplied by the client to /jukebox/play.
+// Relative values are made absolute through publicurl: trusting the Host header
+// alone would hand the speaker whatever name the browser used, typically localhost.
+func clientStreamURL(r *http.Request, rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	absolute := publicurl.AbsoluteURL(r.Context(), rawURL, nil)
+	warnIfNotReachable(r, absolute)
+	return absolute
+}
+
 // warnIfNotReachable flags the most common silent failure: a loopback URL handed
 // to a remote output, which resolves it against itself and plays nothing.
 func warnIfNotReachable(r *http.Request, streamURL string) {
@@ -247,23 +261,4 @@ func warnIfNotReachable(r *http.Request, streamURL string) {
 	}
 	log.Warn(r.Context(), "Jukebox stream URL points at the loopback interface; remote outputs cannot reach it. Set BaseUrl to this server's LAN address",
 		"url", streamURL)
-}
-
-// absoluteRequestURL prefixes relative URLs (e.g. subsonic stream paths) with
-// the scheme/host of the incoming request.
-func absoluteRequestURL(r *http.Request, rawURL string) string {
-	if rawURL == "" || strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://") {
-		return rawURL
-	}
-	return requestScheme(r) + "://" + r.Host + rawURL
-}
-
-func requestScheme(r *http.Request) string {
-	if r.TLS != nil {
-		return "https"
-	}
-	if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded != "" {
-		return strings.TrimSpace(strings.Split(forwarded, ",")[0])
-	}
-	return "http"
 }

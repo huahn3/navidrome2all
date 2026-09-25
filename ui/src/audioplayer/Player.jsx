@@ -48,6 +48,7 @@ const Player = () => {
   const lastPositionMsRef = useRef(0)
   const currentTrackIdRef = useRef(null)
   const stoppedRef = useRef(false)
+  const playerRef = useRef(null)
   const [audioInstance, setAudioInstance] = useState(null)
   // Multi-output (jukebox) support
   const outputDevice = playerState.outputDevice || BROWSER_DEVICE
@@ -351,6 +352,45 @@ const Player = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outputDevice, audioInstance, remoteActive])
+
+  // Synchronize dynamic lyric updates (e.g. bilingual translation toggle) to player instance
+  useEffect(() => {
+    const currentLyric = playerState.current?.lyric
+    const currentTrackId = playerState.current?.trackId
+    const player = playerRef.current
+    if (player && currentLyric !== undefined) {
+      const playIndex =
+        typeof player.getCurrentPlayIndex === 'function'
+          ? player.getCurrentPlayIndex()
+          : player.state?.playIndex || 0
+
+      // 1. Update all matching tracks in player's internal state.audioLists so updateAudioLists won't revert
+      if (Array.isArray(player.state?.audioLists)) {
+        player.state.audioLists.forEach((item) => {
+          if (item.trackId === currentTrackId) {
+            item.lyric = currentLyric
+          }
+        })
+        if (player.state.audioLists[playIndex]) {
+          player.state.audioLists[playIndex].lyric = currentLyric
+        }
+      }
+
+      // 2. Update player's internal state.lyric and force immediate re-parse
+      if (player.state?.lyric !== currentLyric) {
+        player.setState({ lyric: currentLyric }, () => {
+          if (typeof player.initLyricParser === 'function') {
+            player.initLyricParser()
+          } else if (player.lyric && audioInstance) {
+            player.lyric.update((audioInstance.currentTime || 0) * 1000)
+          }
+        })
+      } else if (player.lyric && audioInstance) {
+        player.lyric.update((audioInstance.currentTime || 0) * 1000)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerState.current?.lyric, playerState.current?.trackId, audioInstance])
 
   useEffect(() => {
     const handleBeforeUnload = (e) => {
@@ -797,6 +837,7 @@ const Player = () => {
   return (
     <ThemeProvider theme={createMuiTheme(theme)}>
       <ReactJkMusicPlayer
+        ref={playerRef}
         {...options}
         className={classes.player}
         onAudioListsChange={onAudioListsChange}

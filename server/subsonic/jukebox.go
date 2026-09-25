@@ -31,7 +31,7 @@ func (api *Router) JukeboxControl(r *http.Request) (*responses.Subsonic, error) 
 	user := getUser(ctx)
 	p := req.Params(r)
 
-	if !conf.Server.Jukebox.Enabled {
+	if !conf.Server.Jukebox.SubsonicEnabled {
 		return nil, newError(responses.ErrorGeneric, "Jukebox is disabled")
 	}
 

@@ -26,7 +26,7 @@ func buildUserResponse(user model.User) responses.User {
 		Folder:            slice.Map(user.Libraries, func(lib model.Library) int32 { return int32(lib.ID) }),
 	}
 
-	if conf.Server.Jukebox.Enabled {
+	if conf.Server.Jukebox.SubsonicEnabled {
 		userResponse.JukeboxRole = !conf.Server.Jukebox.AdminOnly || user.IsAdmin
 	}
 

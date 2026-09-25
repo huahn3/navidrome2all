@@ -700,6 +700,36 @@
         }
       }
     },
+    "lyricsTranslation": {
+      "name": "Lyrics Translation",
+      "title": "Bilingual Lyrics Translation",
+      "description": "Configure on-demand bilingual lyrics translation. Translation only executes when explicitly triggered in the player, avoiding background scan load and memory overhead.",
+      "enable": "Enable Lyrics Translation",
+      "enableHint": "Once enabled, a translate icon will appear in the player toolbar for bilingual lyrics.",
+      "engineSection": "Translation Engine & Language",
+      "engine": "Translation Engine",
+      "targetLanguage": "Target Language",
+      "model": "Model",
+      "credentialsSection": "API Credentials & Network",
+      "apiKey": "API Key",
+      "apiKeyHint": "Masked value shown when saved. Re-enter to overwrite.",
+      "appId": "Baidu App ID",
+      "secretKey": "Baidu Secret Key",
+      "baseUrl": "API Base URL",
+      "proxyUrl": "HTTP Proxy (optional)",
+      "proxyHint": "e.g. http://127.0.0.1:7890. Only needed if the server cannot reach external services directly.",
+      "testSection": "Connection & Translation Test",
+      "testInput": "Sample Text to Translate",
+      "testBtn": "Test Translation Now",
+      "testing": "Testing...",
+      "testSuccess": "Test succeeded! Translated result:",
+      "testFailed": "Test failed:",
+      "save": "Save Settings",
+      "saving": "Saving...",
+      "saved": "Lyrics translation settings saved successfully!",
+      "saveFailed": "Failed to save settings — check permissions or network",
+      "loadFailed": "Failed to load settings — admin privileges required"
+    },
     "albumList": "Albums",
     "playlists": "Playlists",
     "onlyFavourites": "Only show favourites",
@@ -729,7 +759,17 @@
       "orderLoop": "Repeat",
       "singleLoop": "Repeat One",
       "shufflePlay": "Shuffle"
-    }
+    },
+    "translateLyric": "Translate Lyrics (bilingual)",
+    "showOriginalLyric": "Show Original Lyrics",
+    "translating": "Translating lyrics...",
+    "translateSuccess": "Lyrics translated, bilingual view enabled",
+    "showOriginalLyricSuccess": "Restored original lyrics",
+    "showBilingualLyricSuccess": "Switched to bilingual lyrics",
+    "translateEmpty": "No translatable lyrics found",
+    "translateNotFound": "No lyrics available for this song",
+    "translateForbidden": "Lyrics translation is disabled — configure it in Settings",
+    "translateFailed": "Translation failed — check network or API settings"
   },
   "about": {
     "links": {

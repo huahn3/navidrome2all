@@ -357,11 +357,12 @@ func startJellyfinDiscovery(ctx context.Context) func() error {
 }
 
 // startPlaybackServer starts the Navidrome playback server, if configured.
-// It is responsible for the Jukebox functionality
+// It is responsible for the upstream Subsonic Jukebox mode (mpv on the server),
+// which is a different feature from the web UI's multi-output switcher.
 func startPlaybackServer(ctx context.Context) func() error {
 	return func() error {
-		if !conf.Server.Jukebox.Enabled {
-			log.Debug("Jukebox is DISABLED")
+		if !conf.Server.Jukebox.SubsonicEnabled {
+			log.Debug("Subsonic Jukebox (mpv playback) is DISABLED")
 			return nil
 		}
 		log.Info(ctx, "Starting Jukebox service")

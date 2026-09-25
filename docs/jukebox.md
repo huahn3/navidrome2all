@@ -20,7 +20,8 @@
   MediaSession/锁屏界面，进度条以本地时钟为准并按设备回报校准（`Player.jsx`）
 
 > 给 AI / 二次开发者的接手文档是仓库根的 `AGENTS.md`（命令、代码地图、不变量、已知坑）。
-> 本文档面向使用者与排障。
+> 第三方客户端（Android Chora、Symfonium 等）集成 API 请查阅 [Jukebox API 集成指南](jukebox-api.md)。
+> 本文档面向服务端使用者与运维排障。
 
 ## 配置
 
@@ -28,7 +29,8 @@
 
 ```toml
 [Jukebox]
-Enabled = true
+Enabled = true         # 本 fork 的网页多输出端（播放器工具栏的设备选择器 + /api/jukebox）
+SubsonicEnabled = false # 上游的 Subsonic jukeboxControl（mpv 播服务器本机声卡），默认关闭，与上面互不影响
 AdminOnly = true   # 写操作（select/play/control）仅管理员可用；读取（devices/status）所有登录用户可用
 
 [[Jukebox.Outputs]]
@@ -59,9 +61,14 @@ Account = "user@example.com"                  # 可选：小米账号（+ Passwo
 # TextDirective = "5-5"                       # 可选：execute-text-directive 的 siid-aiid 覆盖
 ```
 
-> 总开关只有 `Jukebox.Enabled`（`server/serve_index.go` 以 `jukeboxEnabled` 下发给前端）。
+> 网页这一侧的总开关只有 `Jukebox.Enabled`（`server/serve_index.go` 以 `jukeboxEnabled` 下发给前端）。
 > 即使一台远程设备都还没配，工具栏选择器和 **管理 → 输出设备** 页面依然可见——
 > 否则无处添加设备；列表里除了"浏览器"以外为空即表示还没有远程输出。
+>
+> `Jukebox.SubsonicEnabled` 是**另一套东西**的开关：上游用 mpv 在服务器上放音、通过 Subsonic
+> `jukeboxControl` 给第三方 App 控制的功能。它默认关闭，开不开都不影响上面的网页切换；
+> 只有当你确实想让 Subsonic App 控制 NAS 本机声卡时才打开它（那时还要配 `Jukebox.Devices`/`Default`）。
+> 详见仓库根 `AGENTS.md` 第 4 节。
 
 ## 配置教程（按输出类型）
 
@@ -259,7 +266,8 @@ python3 contrib/jukebox-testing/fake_mpd.py     # 监听 127.0.0.1:16600
 
 > 本节说的是本 fork 新增的 `core/jukebox`。仓库里另有一套**上游自带**的 jukebox
 > （`core/playback` + Subsonic `jukeboxControl`，用 mpv 子进程在服务器上外放），
-> 两者互不相干、共用同一个 `Jukebox.Enabled` 开关。区别见仓库根 `AGENTS.md` 第 4 节。
+> 两者互不相干，**各自一个开关**：网页这套是 `Jukebox.Enabled`，上游那套是
+> `Jukebox.SubsonicEnabled`（默认关闭）。区别见仓库根 `AGENTS.md` 第 4 节。
 
 ```
 ui/src/audioplayer/DeviceSelector.jsx ──┐
@@ -400,7 +408,7 @@ token 与账号密码。响应体会被剥掉这些密钥字段，写请求需�
 
 - Go（Ginkgo）：`make test PKG=./core/jukebox`（98 specs，含 xiaomi 驱动的假 miio
   UDP 服务器与 httptest 假小米云、假 DLNA 渲染器与 SSDP 回放）、
-  `make test PKG=./server/nativeapi`（180 specs，含输出 CRUD 的鉴权与 ID 校验）、
+  `make test PKG=./server/nativeapi`（183 specs，含输出 CRUD 的鉴权与 ID 校验）、
   `server/subsonic` 含 `StreamAlias`（`/rest/stream/{id}.mp3`）用例
 - 前端（Vitest）：`cd ui && npm run test`（88 文件 / 774 用例，含 `DeviceSelector.test.jsx`、
   `VolumeControl.test.jsx`、`PlayerToolbar.test.jsx`、`playerReducer.test.js`）
@@ -429,7 +437,7 @@ token 与账号密码。响应体会被剥掉这些密钥字段，写请求需�
 | 音量刷新后变成 0%（或切设备后一直是 0%） | 驱动在设备首次回答音量查询前回报 0，被界面采纳并持久化 | 已由"忽略设备回报 0 + 读取持久化时把 0 换成默认值"修复；若复现，先查 `/api/jukebox/status` 的 `volume` 与 localStorage 的 `state.player.volume` |
 | 拖滑块后设备音量不动 | 当前是浏览器输出（`AdminOnly` 下非管理员被 403），或 `/control volume` 失败 | 看同时间戳的驱动错误（502 body 是设备原文）；确认选中设备与登录用户权限 |
 | 键盘 `Vol+/Vol-` 没反应 | 快捷键绕过了 store 直接写 `<audio>`，被"音量权威"effect 夺回 | 现状已修正为走 `setVolume`；二次开发时不要改回直接赋值（见[音量模型](#音量模型)） |
-| 用第三方 App（Substream 等）的音量/播放键控制的是另一套设备 | Subsonic `jukeboxControl` 走的是**上游** `core/playback`（mpv 本机播放），与本 fork 的 `core/jukebox` 无关 | 不是 bug：网页输出切换只影响 `/api/jukebox/*`。要给第三方 App 用局域网音箱，需要把它们合并（见 `AGENTS.md` 第 4 节） |
+| 第三方 App（Substream 等）里看不到 jukebox/音量控制 | 上游 `core/playback`（mpv 服务器本机播放）由 `Jukebox.SubsonicEnabled` 单独控制，默认关闭 | 这是有意解耦：网页的输出切换只影响 `/api/jukebox/*`。确实要让 App 控制 NAS 本机声卡时，打开 `SubsonicEnabled`（并按需配 `Devices`/`Default`）；想让它们控制局域网音箱则要把 mpv 实现成一个 `PlayerDriver`（见 `AGENTS.md` 第 4 节） |
 
 ## 已知限制
 

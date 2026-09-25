@@ -34,7 +34,7 @@ var _ = Describe("Users", func() {
 		It("should return consistent user data in both GetUser and GetUsers", func() {
 			conf.Server.EnableDownloads = true
 			conf.Server.EnableSharing = true
-			conf.Server.Jukebox.Enabled = false
+			conf.Server.Jukebox.SubsonicEnabled = false
 
 			// Set up user with libraries
 			testUser.Libraries = model.Libraries{
@@ -89,19 +89,23 @@ var _ = Describe("Users", func() {
 	})
 
 	DescribeTable("Jukebox role permissions",
-		func(jukeboxEnabled, adminOnly, isAdmin, expectedJukeboxRole bool) {
-			conf.Server.Jukebox.Enabled = jukeboxEnabled
+		func(subsonicEnabled, webEnabled, adminOnly, isAdmin, expectedJukeboxRole bool) {
+			conf.Server.Jukebox.SubsonicEnabled = subsonicEnabled
+			conf.Server.Jukebox.Enabled = webEnabled
 			conf.Server.Jukebox.AdminOnly = adminOnly
 			testUser.IsAdmin = isAdmin
 
 			response := buildUserResponse(testUser)
 			Expect(response.JukeboxRole).To(Equal(expectedJukeboxRole))
 		},
-		Entry("jukebox disabled", false, false, false, false),
-		Entry("jukebox enabled, not admin-only, regular user", true, false, false, true),
-		Entry("jukebox enabled, not admin-only, admin user", true, false, true, true),
-		Entry("jukebox enabled, admin-only, regular user", true, true, false, false),
-		Entry("jukebox enabled, admin-only, admin user", true, true, true, true),
+		Entry("subsonic jukebox disabled", false, false, false, false, false),
+		Entry("subsonic jukebox enabled, not admin-only, regular user", true, false, false, false, true),
+		Entry("subsonic jukebox enabled, not admin-only, admin user", true, false, true, true, true),
+		Entry("subsonic jukebox enabled, admin-only, regular user", true, false, true, false, false),
+		Entry("subsonic jukebox enabled, admin-only, admin user", true, false, true, true, true),
+		// The web multi-output switcher must never advertise the Subsonic jukebox.
+		Entry("only web outputs enabled", false, true, false, false, false),
+		Entry("only web outputs enabled, admin", false, true, true, true, false),
 	)
 
 	DescribeTable("CoverArt role permissions",

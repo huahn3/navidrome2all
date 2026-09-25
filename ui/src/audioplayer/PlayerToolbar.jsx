@@ -8,6 +8,7 @@ import { RiSaveLine } from 'react-icons/ri'
 import { LoveButton, useToggleLove } from '../common'
 import { openSaveQueueDialog } from '../actions'
 import DeviceSelector from './DeviceSelector'
+import TranslateButton from './TranslateButton'
 import VolumeControl from './VolumeControl'
 import { keyMap } from '../hotkeys'
 import { makeStyles } from '@material-ui/core/styles'
@@ -137,6 +138,16 @@ const PlayerToolbar = ({ id, isRadio }) => {
     />
   )
 
+  const translateButton = (
+    <TranslateButton
+      id={id}
+      isRadio={isRadio}
+      isDesktop={isDesktop}
+      buttonClassName={buttonClass}
+      iconClassName={!isDesktop ? classes.mobileIcon : undefined}
+    />
+  )
+
   return (
     <>
       <GlobalHotKeys keyMap={keyMap} handlers={handlers} allowChanges />
@@ -144,6 +155,7 @@ const PlayerToolbar = ({ id, isRadio }) => {
         <li className={`${listItemClass} item`}>
           {saveQueueButton}
           {loveButton}
+          {translateButton}
           <DeviceSelector
             isDesktop={isDesktop}
             buttonClassName={buttonClass}
@@ -161,6 +173,7 @@ const PlayerToolbar = ({ id, isRadio }) => {
           </li>
           <li className={`${listItemClass} item`}>{saveQueueButton}</li>
           <li className={`${listItemClass} item`}>{loveButton}</li>
+          <li className={`${listItemClass} item`}>{translateButton}</li>
           <li className={`${listItemClass} item`}>
             <DeviceSelector
               isDesktop={isDesktop}

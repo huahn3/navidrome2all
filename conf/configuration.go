@@ -113,19 +113,20 @@ type configOptions struct {
 	PasswordEncryptionKey           string
 	ExtAuth                         extAuthOptions
 	Plugins                         pluginsOptions
-	HTTPHeaders                     httpHeaderOptions   `json:",omitzero"`
-	Prometheus                      prometheusOptions   `json:",omitzero"`
-	Scanner                         scannerOptions      `json:",omitzero"`
-	Jukebox                         jukeboxOptions      `json:",omitzero"`
-	Backup                          backupOptions       `json:",omitzero"`
-	PID                             pidOptions          `json:",omitzero"`
-	Inspect                         inspectOptions      `json:",omitzero"`
-	Subsonic                        subsonicOptions     `json:",omitzero"`
-	Transcoding                     transcodingOptions  `json:",omitzero"`
-	LastFM                          lastfmOptions       `json:",omitzero"`
-	Deezer                          deezerOptions       `json:",omitzero"`
-	ListenBrainz                    listenBrainzOptions `json:",omitzero"`
-	Jellyfin                        jellyfinOptions     `json:",omitzero"`
+	HTTPHeaders                     httpHeaderOptions        `json:",omitzero"`
+	Prometheus                      prometheusOptions        `json:",omitzero"`
+	Scanner                         scannerOptions           `json:",omitzero"`
+	Jukebox                         jukeboxOptions           `json:",omitzero"`
+	LyricsTranslation               LyricsTranslationOptions `json:",omitzero"`
+	Backup                          backupOptions            `json:",omitzero"`
+	PID                             pidOptions               `json:",omitzero"`
+	Inspect                         inspectOptions           `json:",omitzero"`
+	Subsonic                        subsonicOptions          `json:",omitzero"`
+	Transcoding                     transcodingOptions       `json:",omitzero"`
+	LastFM                          lastfmOptions            `json:",omitzero"`
+	Deezer                          deezerOptions            `json:",omitzero"`
+	ListenBrainz                    listenBrainzOptions      `json:",omitzero"`
+	Jellyfin                        jellyfinOptions          `json:",omitzero"`
 	EnableScrobbleHistory           bool
 	Tags                            map[string]TagConf `json:",omitempty"`
 	Agents                          string
@@ -256,17 +257,25 @@ type prometheusOptions struct {
 type AudioDeviceDefinition []string
 
 type jukeboxOptions struct {
-	Enabled   bool
-	Devices   []AudioDeviceDefinition
-	Default   string
-	AdminOnly bool
+	// Enabled lights up the fork's multi-output switcher: the web player's device
+	// selector plus the /api/jukebox native API. It does NOT touch the Subsonic side.
+	Enabled bool
+	// SubsonicEnabled turns on the upstream mpv-backed Jukebox mode: the
+	// /rest/jukeboxControl endpoint, the playback server driving
+	// Jukebox.Devices, and the jukeboxRole advertised to Subsonic clients.
+	// Kept separate from Enabled so that routing audio to a LAN speaker from the
+	// web UI never hands the server's sound card over to third-party apps.
+	SubsonicEnabled bool
+	Devices         []AudioDeviceDefinition
+	Default         string
+	AdminOnly       bool
 	// Outputs configures additional sound output targets (beyond the browser) for the
 	// web UI output switcher (MPD-backed local sound cards, DLNA/UPnP speakers, ...).
 	Outputs []JukeboxOutputDevice `json:",omitempty"`
 }
 
 // JukeboxOutputDevice describes one remote output target selectable in the web player.
-// Type is either "mpd" or "dlna".
+// Type is one of "mpd", "dlna" or "xiaomi".
 type JukeboxOutputDevice struct {
 	ID       string
 	Name     string
@@ -284,6 +293,18 @@ type JukeboxOutputDevice struct {
 	Model         string // model suffix (e.g. "l7a"), selects the MIoT siid/aiid mapping
 	Account       string // Xiaomi account; with Password enables cloud text directives
 	TextDirective string // optional "siid-aiid" override of execute-text-directive
+}
+
+type LyricsTranslationOptions struct {
+	Enabled        bool   `json:"enabled"`
+	Engine         string `json:"engine"` // "gemini", "zhipu", "baidu", "google", "openai"
+	Model          string `json:"model"`  // e.g. "gemini-flash-latest", "gemini-flash-lite-latest", "glm-4-flash"
+	ApiKey         string `json:"apiKey"`
+	SecretKey      string `json:"secretKey,omitempty"` // For Baidu
+	AppID          string `json:"appId,omitempty"`     // For Baidu
+	TargetLanguage string `json:"targetLanguage"`      // e.g. "zh-CN"
+	ProxyURL       string `json:"proxyUrl,omitempty"`
+	BaseURL        string `json:"baseUrl,omitempty"`
 }
 
 type backupOptions struct {
@@ -1074,6 +1095,7 @@ func setViperDefaults() {
 	viper.SetDefault("prometheus.metricspath", consts.PrometheusDefaultPath)
 	viper.SetDefault("prometheus.password", "")
 	viper.SetDefault("jukebox.enabled", false)
+	viper.SetDefault("jukebox.subsonicenabled", false)
 	viper.SetDefault("jukebox.devices", []AudioDeviceDefinition{})
 	viper.SetDefault("jukebox.default", "")
 	viper.SetDefault("jukebox.adminonly", true)
@@ -1132,6 +1154,10 @@ func setViperDefaults() {
 	viper.SetDefault("plugins.cachesize", "200MB")
 	viper.SetDefault("plugins.autoreload", false)
 	viper.SetDefault("plugins.loglevel", "")
+	viper.SetDefault("lyricstranslation.enabled", false)
+	viper.SetDefault("lyricstranslation.engine", "gemini")
+	viper.SetDefault("lyricstranslation.model", "gemini-flash-latest")
+	viper.SetDefault("lyricstranslation.targetlanguage", "zh-CN")
 
 	// DevFlags. These are used to enable/disable debugging and incomplete features
 	viper.SetDefault("devlogsourceline", false)

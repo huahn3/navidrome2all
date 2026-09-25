@@ -14,6 +14,7 @@ import {
   PLAYER_SYNC_QUEUE,
   PLAYER_SET_MODE,
   PLAYER_REFRESH_QUEUE,
+  PLAYER_UPDATE_SONG_LYRIC,
 } from '../actions'
 import config from '../config'
 
@@ -24,6 +25,9 @@ const initialState = {
   volume: config.defaultUIVolume / 100,
   savedPlayIndex: 0,
   outputDevice: BROWSER_DEVICE,
+  bilingualActive: false,
+  originalLyrics: {},
+  bilingualLyrics: {},
 }
 
 const pad = (value) => {
@@ -106,39 +110,60 @@ const reduceClearQueue = (previousState) => ({
   clear: true,
   // The selected sound output is a device preference, keep it across queue clears
   outputDevice: previousState.outputDevice || BROWSER_DEVICE,
+  originalLyrics: previousState.originalLyrics || {},
+  bilingualLyrics: previousState.bilingualLyrics || {},
 })
 
 const reducePlayTracks = (state, { data, id }) => {
   let playIndex = 0
+  const originalLyrics = { ...state.originalLyrics }
   const queue = Object.keys(data).map((key, idx) => {
     if (key === id) {
       playIndex = idx
     }
-    return mapToAudioLists(data[key])
+    const item = mapToAudioLists(data[key])
+    if (item.trackId && item.lyric) {
+      originalLyrics[item.trackId] = item.lyric
+    }
+    return item
   })
   return {
     ...state,
     queue,
     playIndex,
     clear: true,
+    bilingualActive: false,
+    originalLyrics,
   }
 }
 
 const reduceSetTrack = (state, { data }) => {
+  const item = mapToAudioLists(data)
+  const originalLyrics = { ...state.originalLyrics }
+  if (item.trackId && item.lyric) {
+    originalLyrics[item.trackId] = item.lyric
+  }
   return {
     ...state,
-    queue: [mapToAudioLists(data)],
+    queue: [item],
     playIndex: 0,
     clear: true,
+    bilingualActive: false,
+    originalLyrics,
   }
 }
 
 const reduceAddTracks = (state, { data }) => {
-  const queue = state.queue
+  const queue = [...state.queue]
+  const originalLyrics = { ...state.originalLyrics }
   Object.keys(data).forEach((id) => {
-    queue.push(mapToAudioLists(data[id]))
+    const item = mapToAudioLists(data[id])
+    if (item.trackId && item.lyric) {
+      originalLyrics[item.trackId] = item.lyric
+    }
+    queue.push(item)
   })
-  return { ...state, queue, clear: false }
+  return { ...state, queue, clear: false, originalLyrics }
 }
 
 const reducePlayNext = (state, { data }) => {
@@ -181,19 +206,57 @@ const reduceSyncQueue = (state, { data: { audioInfo, audioLists } }) => {
   const hasPendingSwitch =
     state.playIndex != null &&
     (state.clear || state.playIndex !== state.savedPlayIndex)
+
+  // Merge audioLists while preserving any updated lyrics from current state.queue
+  let hasModifiedLyric = false
+  const mergedQueue = (audioLists || []).map((item) => {
+    const existing = state.queue.find(
+      (q) => q.trackId === item.trackId || q.uuid === item.uuid,
+    )
+    if (existing && existing.lyric && existing.lyric !== item.lyric) {
+      hasModifiedLyric = true
+      return { ...item, lyric: existing.lyric }
+    }
+    return item
+  })
+
   return {
     ...state,
-    queue: audioLists,
+    queue: hasModifiedLyric ? mergedQueue : audioLists,
     clear: hasPendingSwitch ? state.clear : false,
     playIndex: hasPendingSwitch ? state.playIndex : undefined,
   }
 }
 
 const reduceCurrent = (state, { data }) => {
-  const current = data.ended ? {} : data
+  const current = data.ended ? {} : { ...data }
+  const currentTrackId = current.trackId || (current.song && current.song.id)
+
+  // Ensure current always retains any updated lyric for the track
+  const existingInQueue = state.queue.find(
+    (item) => item.trackId === currentTrackId,
+  )
+  if (existingInQueue && existingInQueue.lyric) {
+    current.lyric = existingInQueue.lyric
+  }
+
+  const originalLyrics = { ...state.originalLyrics }
+  if (
+    currentTrackId &&
+    current.lyric &&
+    !originalLyrics[currentTrackId] &&
+    !state.bilingualActive
+  ) {
+    originalLyrics[currentTrackId] = current.lyric
+  }
+
   const savedPlayIndex = state.queue.findIndex(
     (item) => item.uuid === current.uuid,
   )
+  const isNewTrack =
+    state.current?.trackId &&
+    currentTrackId &&
+    state.current.trackId !== currentTrackId
   // When a track selection is pending (playIndex is set), keep it alive
   // until the music player confirms it actually switched to the requested
   // track. Without this, a premature onAudioPlay callback for the
@@ -202,6 +265,8 @@ const reduceCurrent = (state, { data }) => {
   return {
     ...state,
     current,
+    bilingualActive: isNewTrack ? false : state.bilingualActive,
+    originalLyrics,
     playIndex: pending ? state.playIndex : undefined,
     clear: pending ? state.clear : false,
     savedPlayIndex: pending ? state.savedPlayIndex : savedPlayIndex,
@@ -219,6 +284,39 @@ const reduceOutputDevice = (state, { data: { deviceId } }) => {
   return {
     ...state,
     outputDevice: deviceId || BROWSER_DEVICE,
+  }
+}
+
+const reduceUpdateSongLyric = (
+  state,
+  { data: { trackId, lyric, isBilingual } },
+) => {
+  const originalLyrics = { ...state.originalLyrics }
+  const bilingualLyrics = { ...state.bilingualLyrics }
+
+  if (isBilingual) {
+    bilingualLyrics[trackId] = lyric
+  } else {
+    originalLyrics[trackId] = lyric
+  }
+
+  const queue = state.queue.map((item) => {
+    if (item.trackId === trackId) {
+      return { ...item, lyric }
+    }
+    return item
+  })
+  const current =
+    state.current && state.current.trackId === trackId
+      ? { ...state.current, lyric }
+      : state.current
+  return {
+    ...state,
+    queue,
+    current,
+    bilingualActive: !!isBilingual,
+    originalLyrics,
+    bilingualLyrics,
   }
 }
 
@@ -245,6 +343,8 @@ export const playerReducer = (previousState = initialState, payload) => {
       return reduceMode(previousState, payload)
     case PLAYER_SET_OUTPUT_DEVICE:
       return reduceOutputDevice(previousState, payload)
+    case PLAYER_UPDATE_SONG_LYRIC:
+      return reduceUpdateSongLyric(previousState, payload)
     case PLAYER_REFRESH_QUEUE: {
       const resolvedUrls = payload.data || {}
       return {

@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	. "github.com/Masterminds/squirrel"
 	"github.com/navidrome/navidrome/conf"
 	"github.com/navidrome/navidrome/consts"
+	"github.com/navidrome/navidrome/core/lyrics"
 	"github.com/navidrome/navidrome/log"
 	"github.com/navidrome/navidrome/model"
 	"github.com/navidrome/navidrome/resources"
@@ -105,6 +107,30 @@ func (api *Router) GetLyrics(r *http.Request) (*responses.Subsonic, error) {
 		return nil, err
 	}
 
+	bilingual, _ := p.Bool("bilingual")
+	if bilingual {
+		targetLang, _ := p.String("lang")
+		if targetLang == "" {
+			targetLang = "zh-CN"
+		}
+		mediaFiles, err := api.ds.MediaFile(r.Context()).GetAll(model.QueryOptions{
+			Filters: And{
+				Eq{"missing": false},
+				Eq{"title": title},
+			},
+			Max: 1,
+		})
+		if err == nil && len(mediaFiles) > 0 {
+			transSvc := lyrics.GetTranslationService(api.ds)
+			if trans, err := transSvc.GetCachedTranslation(mediaFiles[0].ID, targetLang); err == nil && trans != nil && trans.BilingualLRC != "" {
+				lyricsResponse.Artist = artist
+				lyricsResponse.Title = title
+				lyricsResponse.Value = trans.BilingualLRC + "\n"
+				return response, nil
+			}
+		}
+	}
+
 	mainLyric, ok := structuredLyrics.Main()
 	if !ok {
 		return response, nil
@@ -123,7 +149,8 @@ func (api *Router) GetLyrics(r *http.Request) (*responses.Subsonic, error) {
 }
 
 func (api *Router) GetLyricsBySongId(r *http.Request) (*responses.Subsonic, error) {
-	id, err := req.Params(r).String("id")
+	p := req.Params(r)
+	id, err := p.String("id")
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +165,51 @@ func (api *Router) GetLyricsBySongId(r *http.Request) (*responses.Subsonic, erro
 		return nil, err
 	}
 
-	enhanced, _ := req.Params(r).Bool("enhanced")
+	enhanced, _ := p.Bool("enhanced")
+	bilingual, _ := p.Bool("bilingual")
+	translate, _ := p.Bool("translate")
+	targetLang, _ := p.String("lang")
+	if targetLang == "" {
+		targetLang = "zh-CN"
+	}
+
+	transSvc := lyrics.GetTranslationService(api.ds)
+	var trans *lyrics.LyricTranslation
+	if translate || bilingual {
+		trans, _ = transSvc.TranslateSong(r.Context(), mediaFile, targetLang, false)
+	} else {
+		trans, _ = transSvc.GetCachedTranslation(mediaFile.ID, targetLang)
+	}
+
+	if trans != nil && len(trans.Lines) > 0 {
+		if bilingual && !enhanced {
+			for i := range structuredLyrics {
+				if structuredLyrics[i].IsMainKind() {
+					for j := range structuredLyrics[i].Line {
+						if j < len(trans.Lines) && trans.Lines[j].Translation != "" {
+							structuredLyrics[i].Line[j].Value += "\n" + trans.Lines[j].Translation
+						}
+					}
+					break
+				}
+			}
+		} else {
+			transLines := make([]model.Line, len(trans.Lines))
+			for i, l := range trans.Lines {
+				transLines[i] = model.Line{
+					Start: l.Start,
+					End:   l.End,
+					Value: l.Translation,
+				}
+			}
+			structuredLyrics = append(structuredLyrics, model.Lyrics{
+				Kind:   model.LyricKindTranslation,
+				Lang:   trans.TargetLang,
+				Synced: true,
+				Line:   transLines,
+			})
+		}
+	}
 
 	response := newResponse()
 	response.LyricsList = buildLyricsList(mediaFile, structuredLyrics, enhanced)

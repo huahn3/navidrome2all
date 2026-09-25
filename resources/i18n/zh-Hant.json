@@ -681,6 +681,36 @@
         "lastfmNotConfigured": "Last.fm API 金鑰未設定"
       }
     },
+    "lyricsTranslation": {
+      "name": "歌詞翻譯",
+      "title": "歌詞雙語翻譯",
+      "description": "設定多語言歌詞雙語翻譯引擎。僅在播放器或第三方客戶端依需求點擊翻譯時才即時觸發，不增加背景掃描負擔與效能開銷。",
+      "enable": "啟用歌詞翻譯功能",
+      "enableHint": "開啟後，播放器工具列將顯示「翻譯歌詞」按鈕，點擊即可即時取得雙語對照歌詞。",
+      "engineSection": "翻譯引擎與語言",
+      "engine": "翻譯引擎",
+      "targetLanguage": "翻譯目標語言",
+      "model": "模型",
+      "credentialsSection": "API 金鑰與網路參數",
+      "apiKey": "API Key",
+      "apiKeyHint": "已儲存時將顯示遮罩值 (如 sk-****abcd)，若需修改直接輸入新值覆蓋儲存即可。",
+      "appId": "百度 App ID",
+      "secretKey": "百度金鑰 (Secret Key)",
+      "baseUrl": "API Base URL",
+      "proxyUrl": "HTTP / SOCKS5 代理 (可選)",
+      "proxyHint": "例如 http://127.0.0.1:7890。僅在伺服器環境無法直連外部翻譯服務時填寫，留空使用系統預設網路。",
+      "testSection": "連線與翻譯測試",
+      "testInput": "待測試翻譯文字",
+      "testBtn": "立即測試翻譯",
+      "testing": "正在測試...",
+      "testSuccess": "測試成功！翻譯結果：",
+      "testFailed": "測試失敗：",
+      "save": "儲存設定",
+      "saving": "正在儲存...",
+      "saved": "歌詞翻譯設定已成功儲存！",
+      "saveFailed": "儲存設定失敗，請檢查網路或權限",
+      "loadFailed": "載入設定失敗，請確認是否具備管理員權限"
+    },
     "albumList": "專輯",
     "about": "關於",
     "playlists": "播放清單",
@@ -716,7 +746,17 @@
       "orderLoop": "循環播放",
       "singleLoop": "單曲循環",
       "shufflePlay": "隨機播放"
-    }
+    },
+    "translateLyric": "翻譯歌詞 (雙語對照)",
+    "showOriginalLyric": "顯示原文歌詞",
+    "translating": "正在翻譯歌詞...",
+    "translateSuccess": "歌詞翻譯完成，已顯示雙語對照",
+    "showOriginalLyricSuccess": "已恢復原文歌詞",
+    "showBilingualLyricSuccess": "已切換為雙語對照歌詞",
+    "translateEmpty": "未找到可翻譯的歌詞",
+    "translateNotFound": "目前歌曲暫無歌詞可供翻譯",
+    "translateForbidden": "歌詞翻譯功能未開啟，請在「歌詞翻譯」獨立設定中開啟",
+    "translateFailed": "歌詞翻譯失敗，請檢查網路或API設定"
   },
   "about": {
     "links": {

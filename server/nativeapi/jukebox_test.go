@@ -229,6 +229,44 @@ var _ = Describe("Jukebox Endpoints", func() {
 		})
 	})
 
+	Describe("client-provided stream_url", func() {
+		var origHost, origScheme, origBasePath string
+
+		BeforeEach(func() {
+			origHost, origScheme, origBasePath = conf.Server.BaseHost, conf.Server.BaseScheme, conf.Server.BasePath
+		})
+		AfterEach(func() {
+			conf.Server.BaseHost, conf.Server.BaseScheme, conf.Server.BasePath = origHost, origScheme, origBasePath
+		})
+
+		It("resolves a relative URL against the configured BaseUrl, not the Host header", func() {
+			conf.Server.BaseHost = "192.168.31.246:14533"
+			conf.Server.BaseScheme = "http"
+			conf.Server.BasePath = "/music"
+
+			req := reqWithUser("POST", "/jukebox/play", nil, user)
+			req.Host = "localhost:4533"
+
+			parsed, err := url.Parse(clientStreamURL(req, "/rest/stream?id=s1"))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsed.Host).To(Equal("192.168.31.246:14533"))
+			Expect(parsed.Path).To(Equal("/music/rest/stream"))
+			Expect(parsed.Query().Get("id")).To(Equal("s1"))
+		})
+
+		It("leaves an absolute URL untouched", func() {
+			conf.Server.BaseHost = "192.168.31.246:14533"
+			conf.Server.BaseScheme = "http"
+
+			w := clientStreamURL(reqWithUser("POST", "/jukebox/play", nil, user), "http://radio.example/stream.mp3")
+			Expect(w).To(Equal("http://radio.example/stream.mp3"))
+		})
+
+		It("is empty when the client sends none", func() {
+			Expect(clientStreamURL(reqWithUser("POST", "/jukebox/play", nil, user), "")).To(BeEmpty())
+		})
+	})
+
 	Describe("GET /jukebox/status", func() {
 		It("reports a stopped state while driving the browser output", func() {
 			w := httptest.NewRecorder()

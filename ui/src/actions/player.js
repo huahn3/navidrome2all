@@ -10,6 +10,7 @@ export const PLAYER_SET_MODE = 'PLAYER_SET_MODE'
 export const TRANSCODING_SET_PROFILE = 'TRANSCODING_SET_PROFILE'
 export const PLAYER_REFRESH_QUEUE = 'PLAYER_REFRESH_QUEUE'
 export const PLAYER_SET_OUTPUT_DEVICE = 'PLAYER_SET_OUTPUT_DEVICE'
+export const PLAYER_UPDATE_SONG_LYRIC = 'PLAYER_UPDATE_SONG_LYRIC'
 
 // The built-in output: play locally in this browser
 export const BROWSER_DEVICE = 'browser'
@@ -122,4 +123,9 @@ export const setTranscodingProfile = (profile) => ({
 export const refreshQueue = (resolvedUrls) => ({
   type: PLAYER_REFRESH_QUEUE,
   data: resolvedUrls,
+})
+
+export const updateSongLyric = (trackId, lyric, isBilingual = false) => ({
+  type: PLAYER_UPDATE_SONG_LYRIC,
+  data: { trackId, lyric, isBilingual },
 })

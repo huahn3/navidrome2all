@@ -219,7 +219,7 @@ func (api *Router) routes() http.Handler {
 			h501(r, "getShares", "createShare", "updateShare", "deleteShare")
 		}
 
-		if conf.Server.Jukebox.Enabled {
+		if conf.Server.Jukebox.SubsonicEnabled {
 			r.Group(func(r chi.Router) {
 				r.Use(getPlayer(api.players))
 				h(r, "jukeboxControl", api.JukeboxControl)

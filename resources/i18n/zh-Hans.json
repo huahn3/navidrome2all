@@ -689,6 +689,36 @@
         }
       }
     },
+    "lyricsTranslation": {
+      "name": "歌词翻译",
+      "title": "歌词双语翻译",
+      "description": "配置多语言歌词双语翻译引擎。仅在播放器或第三方客户端按需点击翻译时才实时触发，不增加后台扫描负担与性能开销。",
+      "enable": "启用歌词翻译功能",
+      "enableHint": "开启后，播放器工具栏将显示「翻译歌词」按钮，点击即可实时获取双语对照歌词。",
+      "engineSection": "翻译引擎与语言",
+      "engine": "翻译引擎",
+      "targetLanguage": "翻译目标语言",
+      "model": "模型",
+      "credentialsSection": "API 密钥与网络参数",
+      "apiKey": "API Key",
+      "apiKeyHint": "已保存时将显示脱敏值 (如 sk-****abcd)，若需修改直接输入新值覆盖保存即可。",
+      "appId": "百度 App ID",
+      "secretKey": "百度密钥 (Secret Key)",
+      "baseUrl": "API Base URL",
+      "proxyUrl": "HTTP / SOCKS5 代理 (可选)",
+      "proxyHint": "例如 http://127.0.0.1:7890。仅在服务器环境无法直连外部翻译服务时填写，留空使用系统默认网络。",
+      "testSection": "连接与翻译测试",
+      "testInput": "待测试翻译文本",
+      "testBtn": "立即测试翻译",
+      "testing": "正在测试...",
+      "testSuccess": "测试成功！翻译结果：",
+      "testFailed": "测试失败：",
+      "save": "保存配置",
+      "saving": "正在保存...",
+      "saved": "歌词翻译配置已成功保存！",
+      "saveFailed": "保存配置失败，请检查网络或权限",
+      "loadFailed": "加载配置失败，请确认是否具备管理员权限"
+    },
     "albumList": "专辑",
     "playlists": "歌单",
     "sharedPlaylists": "共享的歌单",
@@ -718,7 +748,17 @@
       "orderLoop": "列表循环",
       "singleLoop": "单曲循环",
       "shufflePlay": "随机播放"
-    }
+    },
+    "translateLyric": "翻译歌词 (双语对照)",
+    "showOriginalLyric": "显示原文歌词",
+    "translating": "正在翻译歌词...",
+    "translateSuccess": "歌词翻译完成，已显示双语对照",
+    "showOriginalLyricSuccess": "已恢复原文歌词",
+    "showBilingualLyricSuccess": "已切换为双语对照歌词",
+    "translateEmpty": "未找到可翻译的歌词",
+    "translateNotFound": "当前歌曲暂无歌词可供翻译",
+    "translateForbidden": "歌词翻译功能未开启，请在「歌词翻译」独立设置中开启",
+    "translateFailed": "歌词翻译失败，请检查网络或API配置"
   },
   "about": {
     "links": {
