@@ -16,8 +16,9 @@ Navidrome 的私有 fork，核心二开包含两大能力：
   如何比对上游见 `docs/fork-and-upstream.md`。
 - remote 约定：`upstream` = 上面的只读参照（**永远不要向它 push**）；`origin` = 仓库主人的 GitHub，
   由他自己添加并 push。**不要把 `origin` 指回 navidrome。**
-- 默认分支是 **`master`**，不要"顺手改成 main"：`.github/workflows/pipeline.yml`（第 4、9 行）
-  与 `push-translations.yml`（第 5 行）把触发分支写死成 `master`，改名后 CI 一条都不跑。
+- 默认分支是 **`master`**，不要"顺手改成 main"（与上游一致，便于 `diff` 对照）。
+  本 fork 已**删除全部 GitHub Actions workflows 与 dependabot 配置**，没有任何线上 CI，
+  第 2 节的构建/测试/lint 命令必须自己在本地跑。
 - `.gitignore` 里的模式**都是无前导斜杠的**，因此会匹配任意层级。历史上真实踩过两次：
   `artwork/` 把整个 `core/artwork/` Go 包吞掉了（81 个源文件差点没提交），
   `AGENTS.md` 也被上游那一条忽略掉了（本 fork 已把它改回跟踪，见第 9 节）。
@@ -53,7 +54,7 @@ gofmt -l core/jukebox server/nativeapi core/lyrics conf   # 必须无输出
 cd ui
 npm run test          # Vitest：89 文件 / 778 用例（单跑歌词：npx vitest run src/audioplayer/TranslateButton.test.jsx）
 npm run lint          # ESLint，--max-warnings 0
-npm run check-formatting   # Prettier 只检查（CI 用）；写入用 npm run prettier
+npm run check-formatting   # Prettier 只检查不写入；写入用 npm run prettier
 npm run build         # 产物在 ui/build/（被 go:embed 打进二进制）
 ```
 

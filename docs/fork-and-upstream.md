@@ -18,10 +18,9 @@
 **因此：能 `diff`，不能 `merge`/`rebase`（没有共同祖先，任何合并都是"整棵树对整棵树"）。**
 跟进上游要用下面第 4 节的"补丁搬运"流程，而不是 `git merge upstream/master`。
 
-**为什么分支叫 `master` 而不是 `main`**：随上游带过来的
-`.github/workflows/pipeline.yml`（第 4、9 行）与 `push-translations.yml`（第 5 行）
-把触发分支写死成 `master`。改名要让 CI 继续跑，就得同时改这三个地方，
-否则推送后一条流水线都不会触发。
+**为什么分支叫 `master` 而不是 `main`**：与上游保持一致，便于 `diff` 对照。
+（随上游带过来的 `.github/workflows/` 与 `.github/dependabot.yml` 已在本 fork 整体删除，
+不再有"CI 触发分支写死"的约束。）
 
 ## 1. 一次性配置 remote
 

@@ -36,7 +36,7 @@ npx vitest run src/audioplayer/VolumeControl.test.jsx   # 只跑音量测试
 npx vitest run src/audioplayer/TranslateButton.test.jsx # 只跑歌词翻译测试
 npm run lint        # ESLint，--max-warnings 0
 npm run prettier    # 格式化 ./src
-npm run check-formatting  # 只检查不写入（CI 用）
+npm run check-formatting  # 只检查不写入
 npx prettier --check src/audioplayer/Player.jsx         # 只查改过的文件
 npm run build       # vite 生产构建，产物 ui/build/
 ```
