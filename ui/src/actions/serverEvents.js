@@ -4,6 +4,7 @@ export const EVENT_REFRESH_RESOURCE = 'refreshResource'
 export const EVENT_NOW_PLAYING_COUNT = 'nowPlayingCount'
 export const EVENT_NOW_PLAYING_COUNT_SYNC = 'nowPlayingCountSync'
 export const EVENT_STREAM_RECONNECTED = 'streamReconnected'
+export const EVENT_PLAYBACK_HANDOFF = 'playbackHandoff'
 
 export const processEvent = (type, data) => ({
   type,
@@ -32,4 +33,9 @@ export const serverDown = () => ({
 export const streamReconnected = () => ({
   type: EVENT_STREAM_RECONNECTED,
   data: {},
+})
+
+export const playbackHandoff = (data) => ({
+  type: EVENT_PLAYBACK_HANDOFF,
+  data,
 })

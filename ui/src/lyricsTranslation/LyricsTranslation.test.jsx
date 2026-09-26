@@ -11,9 +11,10 @@ import LyricsTranslation from './LyricsTranslation'
 import httpClient from '../dataProvider/httpClient'
 
 const mockNotify = vi.fn()
+const mockTranslate = (key, options) => options?._ || key
 
 vi.mock('react-admin', () => ({
-  useTranslate: () => (key, options) => options?._ || key,
+  useTranslate: () => mockTranslate,
   useNotify: () => mockNotify,
   Title: ({ title }) => <div data-testid="page-title">{title}</div>,
 }))
@@ -76,7 +77,7 @@ describe('<LyricsTranslation />', () => {
     render(<LyricsTranslation />)
 
     await waitFor(() => {
-      expect(screen.getByText('歌词多引擎翻译配置')).toBeInTheDocument()
+      expect(screen.getByText('歌词双语翻译')).toBeInTheDocument()
     })
 
     expect(screen.getByText('已翻译歌曲管理与重新翻译')).toBeInTheDocument()
@@ -89,7 +90,7 @@ describe('<LyricsTranslation />', () => {
     render(<LyricsTranslation />)
 
     await waitFor(() => {
-      expect(screen.getByText('歌词多引擎翻译配置')).toBeInTheDocument()
+      expect(screen.getByText('歌词双语翻译')).toBeInTheDocument()
     })
 
     const saveBtn = screen.getByText('保存配置')
@@ -140,7 +141,10 @@ describe('<LyricsTranslation />', () => {
       expect(screen.getByText('测试歌曲 1')).toBeInTheDocument()
     })
 
-    const retranslateBtn = screen.getByTitle('使用当前选定模型重新翻译此歌曲')
+    const retranslateTooltip =
+      screen.getByTitle('使用当前选定模型重新翻译此歌曲')
+    const retranslateBtn =
+      retranslateTooltip.querySelector('button') || retranslateTooltip
     fireEvent.click(retranslateBtn)
 
     await waitFor(() => {

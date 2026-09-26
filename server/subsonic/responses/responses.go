@@ -368,6 +368,11 @@ type NowPlayingEntry struct {
 	State        string  `xml:"state,attr"                           json:"state"`
 	PositionMs   int64   `xml:"positionMs,attr"                      json:"positionMs"`
 	PlaybackRate float64 `xml:"playbackRate,attr"                    json:"playbackRate"`
+	SessionId    string  `xml:"sessionId,attr,omitempty"             json:"sessionId,omitempty"`
+	OutputDevice string  `xml:"outputDevice,attr,omitempty"          json:"outputDevice,omitempty"`
+	Volume       int     `xml:"volume,attr,omitempty"                json:"volume,omitempty"`
+	PlayMode     string  `xml:"playMode,attr,omitempty"              json:"playMode,omitempty"`
+	Bilingual    bool    `xml:"bilingual,attr,omitempty"             json:"bilingual,omitempty"`
 }
 
 type NowPlaying struct {

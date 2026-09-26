@@ -68,6 +68,19 @@ type NowPlayingCount struct {
 	Count int `json:"count"`
 }
 
+type PlaybackHandoff struct {
+	baseEvent
+	TargetSessionID string `json:"targetSessionId"`
+	SourceSessionID string `json:"sourceSessionId"`
+	Action          string `json:"action"` // "pause" | "stop"
+	SongID          string `json:"songId"`
+	PositionMs      int64  `json:"positionMs"`
+	NewPlayerName   string `json:"newPlayerName"`
+	OutputDevice    string `json:"outputDevice,omitempty"`
+	Volume          int    `json:"volume,omitempty"`
+	PlayMode        string `json:"playMode,omitempty"`
+}
+
 func (rr *RefreshResource) With(resource string, ids ...string) *RefreshResource {
 	if rr.resources == nil {
 		rr.resources = make(map[string][]string)

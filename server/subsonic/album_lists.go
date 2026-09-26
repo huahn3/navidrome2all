@@ -223,6 +223,11 @@ func (api *Router) GetNowPlaying(r *http.Request) (*responses.Subsonic, error) {
 			State:        np.State,
 			PositionMs:   np.PositionMs,
 			PlaybackRate: np.PlaybackRate,
+			SessionId:    np.PlayerId,
+			OutputDevice: np.OutputDevice,
+			Volume:       np.Volume,
+			PlayMode:     np.PlayMode,
+			Bilingual:    np.Bilingual,
 		}
 	})
 	return response, nil

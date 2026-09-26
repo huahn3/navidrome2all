@@ -293,6 +293,7 @@ type JukeboxOutputDevice struct {
 	Model         string // model suffix (e.g. "l7a"), selects the MIoT siid/aiid mapping
 	Account       string // Xiaomi account; with Password enables cloud text directives
 	TextDirective string // optional "siid-aiid" override of execute-text-directive
+	PassToken     string // session passToken (allows cloud text directives without saving password)
 }
 
 type LyricsTranslationOptions struct {

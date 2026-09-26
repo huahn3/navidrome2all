@@ -23,6 +23,7 @@ const setupHandlers = (stream, dispatchFn) => {
   if (config.enableNowPlaying) {
     stream.addEventListener('nowPlayingCount', eventHandler(dispatchFn))
   }
+  stream.addEventListener('playbackHandoff', eventHandler(dispatchFn))
   stream.addEventListener('keepAlive', eventHandler(dispatchFn))
   stream.onerror = (e) => {
     // eslint-disable-next-line no-console
@@ -79,6 +80,7 @@ const startEventStreamLegacy = async (dispatchFn) => {
       if (config.enableNowPlaying) {
         newStream.addEventListener('nowPlayingCount', eventHandler(dispatchFn))
       }
+      newStream.addEventListener('playbackHandoff', eventHandler(dispatchFn))
       newStream.addEventListener('keepAlive', eventHandler(dispatchFn))
       newStream.onerror = (e) => {
         // eslint-disable-next-line no-console

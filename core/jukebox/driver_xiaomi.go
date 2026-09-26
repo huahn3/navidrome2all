@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,8 +52,26 @@ var xiaomiModelIDs = map[string]xiaomiIDs{
 		playingStatePiid: 1,
 		textSiid:         5, textAiid: 5, silentArg: 0,
 	},
+	"l07a": {
+		volumeSiid: 2, volumePiid: 1, volumeMin: 3,
+		playerSiid: 4, pauseAiid: 1, playAiid: 2,
+		playingStatePiid: 1,
+		textSiid:         5, textAiid: 5, silentArg: 0,
+	},
+	"xiaomi.wifispeaker.l7a": {
+		volumeSiid: 2, volumePiid: 1, volumeMin: 3,
+		playerSiid: 4, pauseAiid: 1, playAiid: 2,
+		playingStatePiid: 1,
+		textSiid:         5, textAiid: 5, silentArg: 0,
+	},
 	// 小米小爱音箱 Play / Pro: execute-text-directive is siid=5 aiid=4.
 	"l05b": {
+		volumeSiid: 2, volumePiid: 1, volumeMin: 1,
+		playerSiid: 4, pauseAiid: 1, playAiid: 2,
+		playingStatePiid: 1,
+		textSiid:         5, textAiid: 4, silentArg: true,
+	},
+	"xiaomi.wifispeaker.l05b": {
 		volumeSiid: 2, volumePiid: 1, volumeMin: 1,
 		playerSiid: 4, pauseAiid: 1, playAiid: 2,
 		playingStatePiid: 1,
@@ -77,25 +96,29 @@ type xiaomiDriver struct {
 	miio  *miioClient
 	cloud *xiaomiCloudClient
 
-	mu            sync.Mutex
-	status        string    // cached status, used when the device cannot be queried
-	volume        int       // cached volume
-	playStartedAt time.Time // last successful Play; speakers report idle while buffering
+	mu             sync.Mutex
+	status         string    // cached status, used when the device cannot be queried
+	volume         int       // cached volume
+	playStartedAt  time.Time // last successful Play; speakers report idle while buffering
+	lastStreamURL  string    // url of the current stream
+	pauseOffsetSec int       // playback offset in seconds when paused
 }
 
 func newXiaomiDriver(dev conf.JukeboxOutputDevice) (*xiaomiDriver, error) {
 	if dev.Address == "" {
 		return nil, errors.New("xiaomi driver requires an address (the speaker IP)")
 	}
-	if dev.Token == "" && (dev.Account == "" || dev.Password == "") {
-		return nil, errors.New("xiaomi driver requires token (local miIO) and/or account+password (cloud MIoT)")
+	if dev.Token == "" && (dev.Account == "" || dev.Password == "") && dev.PassToken == "" {
+		return nil, errors.New("xiaomi driver requires token (local miIO) and/or account+password/passToken (cloud MIoT)")
 	}
 	if dev.Token == "" && dev.DID == "" {
 		return nil, errors.New("xiaomi driver: cloud-only setups require the did (device ID)")
 	}
 
 	ids := xiaomiDefaultIDs
-	if m, ok := xiaomiModelIDs[strings.ToLower(strings.TrimSpace(dev.Model))]; ok {
+	modelKey := strings.ToLower(strings.TrimSpace(dev.Model))
+	modelKey = strings.TrimPrefix(modelKey, "xiaomi.wifispeaker.")
+	if m, ok := xiaomiModelIDs[modelKey]; ok {
 		ids = m
 	}
 	if dev.TextDirective != "" {
@@ -114,7 +137,9 @@ func newXiaomiDriver(dev conf.JukeboxOutputDevice) (*xiaomiDriver, error) {
 		}
 		d.miio = miio
 	}
-	if dev.Account != "" && dev.Password != "" {
+	if dev.PassToken != "" {
+		d.cloud = newXiaomiCloudClientWithPassToken(dev.Account, dev.PassToken)
+	} else if dev.Account != "" && dev.Password != "" {
 		d.cloud = newXiaomiCloudClient(dev.Account, dev.Password)
 	}
 	return d, nil
@@ -161,21 +186,45 @@ func xiaomiStreamURL(raw string) string {
 	return u.String()
 }
 
-// Play tells the speaker to play the given stream URL, via the
-// execute-text-directive action ("播放 <url>"). The cloud transport is
-// preferred when configured: some models (L7A) ignore local text directives.
+func withTimeOffset(raw string, offsetSec int) string {
+	if offsetSec <= 0 {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	q.Set("timeOffset", strconv.Itoa(offsetSec))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// Play tells the speaker to play the given stream URL.
+// When cloud transport is configured, it uses the Mina Ubus player_play_url
+// protocol (which actually streams custom audio URLs). Falls back to
+// execute-text-directive if Mina fails or only local miIO is available.
 func (d *xiaomiDriver) Play(_ string, streamURL string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if streamURL == "" {
 		return fmt.Errorf("%w: xiaomi speakers can only play stream URLs (songId), not local paths", ErrInvalidCommand)
 	}
-	text := "播放 " + xiaomiStreamURL(streamURL)
-	in := []any{text, d.ids.silentArg}
+	d.lastStreamURL = streamURL
+	d.pauseOffsetSec = 0
+	urlToPlay := xiaomiStreamURL(streamURL)
 	var err error
 	if d.cloud != nil {
-		err = d.cloud.action(d.resolvedDID(), d.ids.textSiid, d.ids.textAiid, in)
+		err = d.cloud.playMinaURL(d.resolvedDID(), urlToPlay)
+		if err != nil {
+			// Fallback to text directive if Mina fails
+			text := "播放 " + urlToPlay
+			in := []any{text, d.ids.silentArg}
+			err = d.cloud.action(d.resolvedDID(), d.ids.textSiid, d.ids.textAiid, in)
+		}
 	} else if d.miio != nil {
+		text := "播放 " + urlToPlay
+		in := []any{text, d.ids.silentArg}
 		err = d.miio.miotAction(d.resolvedDID(), d.ids.textSiid, d.ids.textAiid, in)
 	} else {
 		err = errors.New("xiaomi driver: no transport configured")
@@ -189,16 +238,60 @@ func (d *xiaomiDriver) Play(_ string, streamURL string) error {
 }
 
 func (d *xiaomiDriver) Pause() error {
-	return d.playerAction(d.ids.pauseAiid, "paused")
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.playStartedAt.IsZero() && d.status == "playing" {
+		d.pauseOffsetSec += int(time.Since(d.playStartedAt).Seconds())
+	}
+	if d.cloud != nil {
+		if err := d.cloud.playerMinaOperation(d.resolvedDID(), "pause"); err == nil {
+			d.status = "paused"
+			return nil
+		}
+	}
+	return d.lockedPlayerAction(d.ids.pauseAiid, "paused")
 }
 
 func (d *xiaomiDriver) Resume() error {
-	return d.playerAction(d.ids.playAiid, "playing")
-}
-
-func (d *xiaomiDriver) playerAction(aiid int, resultingStatus string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	// Xiaoai speakers drop external HTTP streams on pause and clear their queue (status 0).
+	// Sending raw player_play_operation "play" does nothing because the internal queue is empty.
+	// We seamlessly resume by re-streaming the URL starting from the pause offset!
+	if d.lastStreamURL != "" {
+		urlToPlay := xiaomiStreamURL(withTimeOffset(d.lastStreamURL, d.pauseOffsetSec))
+		var err error
+		if d.cloud != nil {
+			err = d.cloud.playMinaURL(d.resolvedDID(), urlToPlay)
+			if err != nil {
+				text := "播放 " + urlToPlay
+				in := []any{text, d.ids.silentArg}
+				err = d.cloud.action(d.resolvedDID(), d.ids.textSiid, d.ids.textAiid, in)
+			}
+		} else if d.miio != nil {
+			text := "播放 " + urlToPlay
+			in := []any{text, d.ids.silentArg}
+			err = d.miio.miotAction(d.resolvedDID(), d.ids.textSiid, d.ids.textAiid, in)
+		}
+		if err == nil {
+			d.status = "playing"
+			d.playStartedAt = time.Now()
+			return nil
+		}
+	}
+
+	if d.cloud != nil {
+		if err := d.cloud.playerMinaOperation(d.resolvedDID(), "play"); err == nil {
+			d.status = "playing"
+			d.playStartedAt = time.Now()
+			return nil
+		}
+	}
+	return d.lockedPlayerAction(d.ids.playAiid, "playing")
+}
+
+func (d *xiaomiDriver) lockedPlayerAction(aiid int, resultingStatus string) error {
 	if err := d.action(d.ids.playerSiid, aiid, []any{}); err != nil {
 		return err
 	}
@@ -211,6 +304,13 @@ func (d *xiaomiDriver) playerAction(aiid int, resultingStatus string) error {
 func (d *xiaomiDriver) Stop() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.pauseOffsetSec = 0
+	if d.cloud != nil {
+		if err := d.cloud.playerMinaOperation(d.resolvedDID(), "stop"); err == nil {
+			d.status = "stopped"
+			return nil
+		}
+	}
 	if err := d.action(d.ids.playerSiid, d.ids.pauseAiid, []any{}); err != nil {
 		return err
 	}
@@ -218,13 +318,38 @@ func (d *xiaomiDriver) Stop() error {
 	return nil
 }
 
-// Seek is not supported by Xiaoai speakers over MIoT.
-func (d *xiaomiDriver) Seek(int) error {
-	return fmt.Errorf("%w: xiaomi speakers do not support seek", ErrInvalidCommand)
+// Seek re-streams the current track starting from the given offset in seconds.
+func (d *xiaomiDriver) Seek(position int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.lastStreamURL == "" {
+		return fmt.Errorf("%w: cannot seek before playing a track", ErrInvalidCommand)
+	}
+	d.pauseOffsetSec = position
+	urlToPlay := xiaomiStreamURL(withTimeOffset(d.lastStreamURL, position))
+	var err error
+	if d.cloud != nil {
+		err = d.cloud.playMinaURL(d.resolvedDID(), urlToPlay)
+		if err != nil {
+			text := "播放 " + urlToPlay
+			in := []any{text, d.ids.silentArg}
+			err = d.cloud.action(d.resolvedDID(), d.ids.textSiid, d.ids.textAiid, in)
+		}
+	} else if d.miio != nil {
+		text := "播放 " + urlToPlay
+		in := []any{text, d.ids.silentArg}
+		err = d.miio.miotAction(d.resolvedDID(), d.ids.textSiid, d.ids.textAiid, in)
+	}
+	if err != nil {
+		return fmt.Errorf("xiaomi driver: seek failed: %w", err)
+	}
+	d.status = "playing"
+	d.playStartedAt = time.Now()
+	return nil
 }
 
-// SetVolume sets the speaker volume (percent). Requires the local miIO
-// transport (the cloud property API is not implemented).
+// SetVolume sets the speaker volume (percent). Prefers cloud Mina Ubus when available,
+// falling back to cloud prop/set and local miIO.
 func (d *xiaomiDriver) SetVolume(volume int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -234,66 +359,95 @@ func (d *xiaomiDriver) SetVolume(volume int) error {
 	if volume > 100 {
 		volume = 100
 	}
-	if d.miio == nil {
-		return errors.New("xiaomi driver: volume control requires the local miIO transport (token)")
-	}
-	if err := d.miio.miotSetProp(d.resolvedDID(), d.ids.volumeSiid, d.ids.volumePiid, volume); err != nil {
-		return err
-	}
 	d.volume = volume
+
+	if d.cloud != nil {
+		if err := d.cloud.playerMinaSetVolume(d.resolvedDID(), volume); err == nil {
+			return nil
+		}
+		if err := d.cloud.setProp(d.resolvedDID(), d.ids.volumeSiid, d.ids.volumePiid, volume); err == nil {
+			return nil
+		}
+	}
+	if d.miio != nil && d.cloud == nil {
+		_ = d.miio.miotSetProp(d.resolvedDID(), d.ids.volumeSiid, d.ids.volumePiid, volume)
+	}
 	return nil
 }
 
-// GetState queries playing-state and volume from the device when the local
-// transport is available, falling back to the last known values. Progress
-// (CurrentTime/Duration) is never available on these speakers.
+// GetState queries playing-state and volume from the device.
+// Prefers Mina Ubus when cloud is configured (fast HTTP, ~100ms),
+// falling back to local miIO or cached state.
 func (d *xiaomiDriver) GetState() (*PlaybackState, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	state := &PlaybackState{Status: d.status, CurrentTime: 0, Duration: 0, VolumePercent: d.volume}
-	if d.miio == nil {
-		return state, nil
-	}
-	values, err := d.miio.miotGetProps(d.resolvedDID(),
-		[2]int{d.ids.playerSiid, d.ids.playingStatePiid},
-		[2]int{d.ids.volumeSiid, d.ids.volumePiid},
-	)
-	if err != nil {
-		log.Debug("xiaomi GetState failed, returning cached state", "address", d.miio.addr, err)
-		return state, nil
-	}
-	for _, v := range values {
-		if v.Code != 0 {
-			continue
-		}
-		var n int
-		if err := json.Unmarshal(v.Value, &n); err != nil {
-			continue
-		}
-		switch {
-		case v.Siid == d.ids.playerSiid && v.Piid == d.ids.playingStatePiid:
-			// playing-state: 0 = idle, 1 = playing, 2 = paused (s12).
-			// Right after a Play the speaker still reports idle while it
-			// fetches/buffers the stream — keep "playing" during that window.
-			switch n {
+
+	if d.cloud != nil {
+		if minaStatus, err := d.cloud.getMinaStatus(d.resolvedDID()); err == nil {
+			if minaStatus.Volume > 0 && minaStatus.Volume <= 100 {
+				d.volume = minaStatus.Volume
+				state.VolumePercent = minaStatus.Volume
+			}
+			switch minaStatus.Status {
 			case 1:
 				d.status = "playing"
 			case 2:
 				d.status = "paused"
 			default:
 				if d.status == "playing" && time.Since(d.playStartedAt) < xiaomiPlayGracePeriod {
-					// buffering grace window, keep "playing"
+					// buffering grace period
+				} else if d.status == "paused" {
+					// keep paused
 				} else {
 					d.status = "stopped"
 				}
 			}
-		case v.Siid == d.ids.volumeSiid && v.Piid == d.ids.volumePiid:
-			if n >= 0 && n <= 100 {
-				d.volume = n
-			}
+			state.Status = d.status
+			return state, nil
 		}
 	}
-	state.Status = d.status
-	state.VolumePercent = d.volume
+
+	if d.miio != nil && d.cloud == nil {
+		values, err := d.miio.miotGetProps(d.resolvedDID(),
+			[2]int{d.ids.playerSiid, d.ids.playingStatePiid},
+			[2]int{d.ids.volumeSiid, d.ids.volumePiid},
+		)
+		if err != nil {
+			log.Debug("xiaomi GetState failed, returning cached state", "address", d.miio.addr, err)
+			return state, nil
+		}
+		for _, v := range values {
+			if v.Code != 0 {
+				continue
+			}
+			var n int
+			if err := json.Unmarshal(v.Value, &n); err != nil {
+				continue
+			}
+			switch {
+			case v.Siid == d.ids.playerSiid && v.Piid == d.ids.playingStatePiid:
+				switch n {
+				case 1:
+					d.status = "playing"
+				case 2:
+					d.status = "paused"
+				default:
+					if d.status == "playing" && time.Since(d.playStartedAt) < xiaomiPlayGracePeriod {
+						// buffering grace window, keep "playing"
+					} else {
+						d.status = "stopped"
+					}
+				}
+			case v.Siid == d.ids.volumeSiid && v.Piid == d.ids.volumePiid:
+				if n >= 0 && n <= 100 {
+					d.volume = n
+				}
+			}
+		}
+		state.Status = d.status
+		state.VolumePercent = d.volume
+	}
+
 	return state, nil
 }

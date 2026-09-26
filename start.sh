@@ -10,12 +10,16 @@ pkill -f 'bin/navidrome' 2>/dev/null && echo "→ 停止旧实例" || true
 sleep 1
 
 echo "→ 启动 Navidrome (端口 14534)..."
+DEF_IF=$(route get default 2>/dev/null | awk '/interface:/{print $2}')
+LAN_IP=$(ipconfig getifaddr "$DEF_IF" 2>/dev/null || ipconfig getifaddr en0 2>/dev/null || echo localhost)
+echo "→ 检测到局域网 IP: $LAN_IP"
+
 ND_PORT=14534 \
 ND_DATAFOLDER=. \
 ND_MUSICFOLDER=./music \
 ND_LOGLEVEL=info \
 ND_JUKEBOX_ENABLED=true \
-ND_BASEURL="http://$(ipconfig getifaddr en0 2>/dev/null || echo localhost):14534" \
+ND_BASEURL="http://${LAN_IP}:14534" \
 nohup ./bin/navidrome > /tmp/navidrome.log 2>&1 &
 disown
 PID=$!

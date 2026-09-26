@@ -211,6 +211,22 @@ var _ = Describe("Jukebox Outputs Endpoints", func() {
 				Expect(w.Code).To(Equal(http.StatusNotFound))
 			})
 		})
+
+		Describe("Xiaomi auth endpoints", func() {
+			It("requires admin for all xiaomi endpoints", func() {
+				user := model.User{ID: "u2", UserName: "joe"}
+				Expect(do("GET", "/jukebox/outputs/xiaomi/qr/init", nil, user).Code).To(Equal(http.StatusForbidden))
+				Expect(do("POST", "/jukebox/outputs/xiaomi/qr/poll", []byte(`{}`), user).Code).To(Equal(http.StatusForbidden))
+				Expect(do("POST", "/jukebox/outputs/xiaomi/login/password", []byte(`{}`), user).Code).To(Equal(http.StatusForbidden))
+				Expect(do("POST", "/jukebox/outputs/xiaomi/login/passtoken", []byte(`{}`), user).Code).To(Equal(http.StatusForbidden))
+			})
+
+			It("validates bad requests on xiaomi auth endpoints", func() {
+				Expect(do("POST", "/jukebox/outputs/xiaomi/qr/poll", []byte(`{}`), admin).Code).To(Equal(http.StatusBadRequest))
+				Expect(do("POST", "/jukebox/outputs/xiaomi/login/password", []byte(`{}`), admin).Code).To(Equal(http.StatusBadRequest))
+				Expect(do("POST", "/jukebox/outputs/xiaomi/login/passtoken", []byte(`{}`), admin).Code).To(Equal(http.StatusBadRequest))
+			})
+		})
 	})
 
 })

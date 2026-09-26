@@ -162,69 +162,83 @@ func (c *miioClient) call(method string, params any) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := net.DialUDP("udp", nil, raddr)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(c.timeout))
 
-	if c.did == 0 {
-		if err := c.handshake(conn); err != nil {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		conn, err := net.DialUDP("udp", nil, raddr)
+		if err != nil {
 			return nil, err
 		}
-	}
+		_ = conn.SetDeadline(time.Now().Add(c.timeout))
 
-	c.nextID++
-	body, err := json.Marshal(map[string]any{"id": c.nextID, "method": method, "params": params})
-	if err != nil {
-		return nil, err
-	}
+		// Always perform a handshake to synchronize the clock with the device,
+		// preventing the speaker from dropping packets due to timestamp mismatch.
+		if err := c.handshake(conn); err != nil {
+			_ = conn.Close()
+			c.stamp = 0
+			lastErr = err
+			continue
+		}
 
-	ciphertext, err := miioCrypt(c.key, c.iv, body, true)
-	if err != nil {
-		return nil, err
-	}
+		c.nextID++
+		body, err := json.Marshal(map[string]any{"id": c.nextID, "method": method, "params": params})
+		if err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
 
-	// Header: magic, length, unknown, device ID, stamp, then an MD5 checksum
-	// of (header[0:16] + token + ciphertext) in place of the plain token.
-	header := make([]byte, 32)
-	binary.BigEndian.PutUint16(header[0:2], 0x2131)
-	binary.BigEndian.PutUint16(header[2:4], uint16(32+len(ciphertext)))
-	binary.BigEndian.PutUint32(header[8:12], c.did)
-	binary.BigEndian.PutUint32(header[12:16], c.currentStamp())
-	h := md5.New() //nolint:gosec // mandated by the protocol
-	for _, part := range [][]byte{header[:16], c.token, ciphertext} {
-		_, _ = h.Write(part)
-	}
-	copy(header[16:32], h.Sum(nil))
+		ciphertext, err := miioCrypt(c.key, c.iv, body, true)
+		if err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
 
-	if _, err := conn.Write(append(header, ciphertext...)); err != nil {
-		return nil, err
-	}
+		header := make([]byte, 32)
+		binary.BigEndian.PutUint16(header[0:2], 0x2131)
+		binary.BigEndian.PutUint16(header[2:4], uint16(32+len(ciphertext)))
+		binary.BigEndian.PutUint32(header[8:12], c.did)
+		binary.BigEndian.PutUint32(header[12:16], c.stamp+1)
+		h := md5.New() //nolint:gosec // mandated by the protocol
+		for _, part := range [][]byte{header[:16], c.token, ciphertext} {
+			_, _ = h.Write(part)
+		}
+		copy(header[16:32], h.Sum(nil))
 
-	buf := make([]byte, 64*1024)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return nil, fmt.Errorf("xiaomi miio: no reply from %s: %w", c.addr, err)
-	}
-	resp := buf[:n]
-	if len(resp) < 32 || binary.BigEndian.Uint16(resp[0:2]) != 0x2131 {
-		return nil, fmt.Errorf("xiaomi miio: invalid reply from %s", c.addr)
-	}
-	plain, err := miioCrypt(c.key, c.iv, resp[32:], false)
-	if err != nil {
-		return nil, err
-	}
+		if _, err := conn.Write(append(header, ciphertext...)); err != nil {
+			_ = conn.Close()
+			lastErr = err
+			continue
+		}
 
-	var out miioResponse
-	if err := json.Unmarshal(plain, &out); err != nil {
-		return nil, fmt.Errorf("xiaomi miio: undecodable reply %q: %w", plain, err)
+		buf := make([]byte, 64*1024)
+		n, err := conn.Read(buf)
+		_ = conn.Close()
+		if err != nil {
+			c.stamp = 0
+			lastErr = fmt.Errorf("xiaomi miio: no reply from %s: %w", c.addr, err)
+			continue
+		}
+
+		resp := buf[:n]
+		if len(resp) < 32 || binary.BigEndian.Uint16(resp[0:2]) != 0x2131 {
+			lastErr = fmt.Errorf("xiaomi miio: invalid reply from %s", c.addr)
+			continue
+		}
+		plain, err := miioCrypt(c.key, c.iv, resp[32:], false)
+		if err != nil {
+			return nil, err
+		}
+
+		var out miioResponse
+		if err := json.Unmarshal(plain, &out); err != nil {
+			return nil, fmt.Errorf("xiaomi miio: undecodable reply %q: %w", plain, err)
+		}
+		if out.Error != nil {
+			return nil, fmt.Errorf("xiaomi miio: %s (code %d)", out.Error.Message, out.Error.Code)
+		}
+		return out.Result, nil
 	}
-	if out.Error != nil {
-		return nil, fmt.Errorf("xiaomi miio: %s (code %d)", out.Error.Message, out.Error.Code)
-	}
-	return out.Result, nil
+	return nil, lastErr
 }
 
 // miotPropValue is one entry of a get_properties result.

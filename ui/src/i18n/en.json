@@ -219,6 +219,7 @@
         "did": "Device ID",
         "model": "Model",
         "account": "Xiaomi account",
+        "passToken": "passToken credential",
         "textDirective": "Text directive",
         "source": "Source"
       },
@@ -233,7 +234,9 @@
         "token": "32-character hex miIO token, used for LAN control.",
         "did": "Optional miIO device ID, detected automatically when empty.",
         "model": "Optional speaker model, e.g. l7a, s12, l05b; selects the playback parameters.",
+        "account": "Xiaomi user ID or account (phone/email/ID), used for cloud text directives.",
         "accountPassword": "Xiaomi cloud account, used as a fallback when LAN control is unavailable.",
+        "passToken": "Xiaomi cloud session passToken, obtained via QR scan or MI-PassToken-Helper, without storing password.",
         "textDirective": "Optional playback directive override, e.g. 5-5.",
         "pathFrom": "MPD receives the path relative to the library root (e.g. songs/track.mp3), so this is usually empty. Only fill it when MPD's database uses a different path segment.",
         "pathTo": "Replacement path prefix.",
@@ -823,7 +826,17 @@
   "nowPlaying": {
     "title": "Now Playing",
     "empty": "Nothing playing",
-    "minutesAgo": "%{smart_count} minute ago |||| %{smart_count} minutes ago"
+    "minutesAgo": "%{smart_count} minute ago |||| %{smart_count} minutes ago",
+    "takeoverTooltip": "Take over playback here",
+    "takeoverSuccess": "Took over %{title} from %{time}",
+    "handoffPausedNotice": "Playback transferred to %{name}, local playback paused",
+    "otherDevice": "another device",
+    "webPlayer": "Web",
+    "currentDevice": "Current Device",
+    "currentDeviceShort": "This Device",
+    "currentlyPlayingHere": "Playing on this device",
+    "remoteOutputDevice": "Output Device",
+    "volume": "Volume"
   },
   "help": {
     "title": "Navidrome Hotkeys",

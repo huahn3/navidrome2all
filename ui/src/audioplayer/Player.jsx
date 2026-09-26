@@ -6,6 +6,7 @@ import {
   createMuiTheme,
   useAuthState,
   useDataProvider,
+  useNotify,
   useTranslate,
 } from 'react-admin'
 import ReactGA from 'react-ga'
@@ -18,6 +19,7 @@ import useStyle from './styles'
 import AudioTitle from './AudioTitle'
 import {
   BROWSER_DEVICE,
+  clearPendingSeek,
   clearQueue,
   currentPlaying,
   refreshQueue,
@@ -25,10 +27,12 @@ import {
   setTranscodingProfile,
   setVolume,
   syncQueue,
+  updateSongLyric,
 } from '../actions'
 import PlayerToolbar from './PlayerToolbar'
 import * as jukebox from './jukebox'
 import { sendNotification } from '../utils'
+import httpClient, { clientUniqueId } from '../dataProvider/httpClient'
 import subsonic from '../subsonic'
 import locale from './locale'
 import { keyMap } from '../hotkeys'
@@ -39,6 +43,7 @@ import { detectBrowserProfile, decisionService } from '../transcode'
 const Player = () => {
   const theme = useCurrentTheme()
   const translate = useTranslate()
+  const notify = useNotify()
   const playerTheme = theme.player?.theme || 'dark'
   const dataProvider = useDataProvider()
   const playerState = useSelector((state) => state.player)
@@ -62,6 +67,7 @@ const Player = () => {
   const lastUserPlayRef = useRef(0)
   const lastUserPauseRef = useRef(0)
   const lastRemoteErrorRef = useRef(0)
+  const isHandoffPausedRef = useRef(false) // true when taken over by another device
   // Status polling degrades to a slow retry loop while a remote output keeps
   // failing, so an unreachable device does not flood the log every second
   const [remoteStatusDelay, setRemoteStatusDelay] = useState(1000)
@@ -83,6 +89,18 @@ const Player = () => {
   outputDeviceRef.current = outputDevice
   remoteActiveRef.current = remoteActive
 
+  const getReportExtra = useCallback(
+    () => ({
+      volume: Math.round(
+        (playerStateRef.current?.volume ?? config.defaultUIVolume / 100) * 100,
+      ),
+      outputDevice: outputDeviceRef.current || BROWSER_DEVICE,
+      playMode: playerStateRef.current?.mode || '',
+      bilingualActive: !!playerStateRef.current?.bilingualActive,
+    }),
+    [],
+  )
+
   useInterval(
     () => {
       if (heartbeatTrackId && !stoppedRef.current) {
@@ -90,6 +108,7 @@ const Player = () => {
           heartbeatTrackId,
           lastPositionMsRef.current,
           'playing',
+          getReportExtra(),
         )
       }
     },
@@ -223,6 +242,89 @@ const Player = () => {
     }
     audioInstance.muted = remoteActive
   }, [audioInstance, remoteActive])
+
+  // Apply pending seek and state from takeover or remote synchronization
+  useEffect(() => {
+    if (playerState.pendingSeekTime != null && audioInstance) {
+      const targetTime = playerState.pendingSeekTime
+      const targetState = playerState.pendingState
+      const applyHandoff = () => {
+        if (targetTime > 0) {
+          audioInstance.currentTime = targetTime
+        }
+        if (targetState === 'paused') {
+          if (!audioInstance.paused) {
+            audioInstance.pause()
+          }
+        } else if (targetState === 'playing') {
+          if (audioInstance.paused) {
+            audioInstance.play().catch(() => {})
+          }
+        }
+        dispatch(clearPendingSeek())
+      }
+
+      if (audioInstance.readyState >= 1) {
+        applyHandoff()
+      } else {
+        const onLoaded = () => {
+          applyHandoff()
+        }
+        audioInstance.addEventListener('loadedmetadata', onLoaded, {
+          once: true,
+        })
+        return () => {
+          audioInstance.removeEventListener('loadedmetadata', onLoaded)
+        }
+      }
+    }
+  }, [
+    playerState.pendingSeekTime,
+    playerState.pendingState,
+    audioInstance,
+    dispatch,
+  ])
+
+  // Handle cross-client playback handoff (single-active-speaker mutual exclusion)
+  const lastHandledHandoffRef = useRef(null)
+  useEffect(() => {
+    const handoff = playerState.lastHandoff
+    if (!handoff || !handoff._receivedAt) return
+    if (lastHandledHandoffRef.current === handoff._receivedAt) return
+    lastHandledHandoffRef.current = handoff._receivedAt
+
+    // Check if THIS client is the target that was taken over
+    if (handoff.targetSessionId && handoff.targetSessionId === clientUniqueId) {
+      isHandoffPausedRef.current = true
+      if (audioInstance && !audioInstance.paused) {
+        audioInstance.pause()
+      }
+      if (currentTrackIdRef.current) {
+        const posMs = Math.floor((audioInstance?.currentTime || 0) * 1000)
+        subsonic.reportPlayback(
+          currentTrackIdRef.current,
+          posMs,
+          'paused',
+          getReportExtra(),
+        )
+      }
+      const remoteName =
+        handoff.newPlayerName ||
+        translate('nowPlaying.otherDevice') ||
+        '其他设备'
+      notify(
+        translate('nowPlaying.handoffPausedNotice', { name: remoteName }) ||
+          `播放已被「${remoteName}」接管，本地已暂停`,
+        { type: 'info' },
+      )
+    }
+  }, [
+    playerState.lastHandoff,
+    audioInstance,
+    notify,
+    translate,
+    getReportExtra,
+  ])
 
   // Take a remote output's reported volume (0-100) as the shared volume.
   // Zero is ignored: drivers report 0 until the device answers its first
@@ -392,6 +494,36 @@ const Player = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerState.current?.lyric, playerState.current?.trackId, audioInstance])
 
+  // If bilingual mode was inherited during handoff, ensure the translated lyric is loaded
+  const isBilingualActive = playerState.bilingualActive
+  const currentTrackIdForLyric = playerState.current?.trackId
+  const bilingualLyrics = playerState.bilingualLyrics
+  useEffect(() => {
+    if (
+      isBilingualActive &&
+      currentTrackIdForLyric &&
+      !bilingualLyrics?.[currentTrackIdForLyric]
+    ) {
+      httpClient('/api/lyrics/translate', {
+        method: 'POST',
+        body: JSON.stringify({ songId: currentTrackIdForLyric }),
+      })
+        .then((res) => {
+          const bilingualLrc =
+            res.json?.inlineLrc ||
+            res.json?.combinedLrc ||
+            res.json?.bilingualLrc ||
+            ''
+          if (bilingualLrc) {
+            dispatch(
+              updateSongLyric(currentTrackIdForLyric, bilingualLrc, true),
+            )
+          }
+        })
+        .catch(() => {})
+    }
+  }, [isBilingualActive, currentTrackIdForLyric, bilingualLyrics, dispatch])
+
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (playerState.current?.uuid && audioInstance && !audioInstance.paused) {
@@ -408,6 +540,7 @@ const Player = () => {
             currentTrackIdRef.current,
             lastPositionMsRef.current,
             'stopped',
+            getReportExtra(),
           )
         } catch {
           // fetch/sendBeacon may throw; ignore
@@ -421,7 +554,7 @@ const Player = () => {
       window.removeEventListener('beforeunload', handleBeforeUnload)
       window.removeEventListener('pagehide', handlePageHide)
     }
-  }, [playerState, audioInstance])
+  }, [playerState, audioInstance, getReportExtra])
 
   const defaultOptions = useMemo(
     () => ({
@@ -470,6 +603,7 @@ const Player = () => {
       autoPlay:
         playerState.queue.length > 0 &&
         playerState.autoPlay !== false &&
+        playerState.pendingState !== 'paused' &&
         (playerState.clear || playerState.playIndex === 0),
       clearPriorAudioLists: playerState.clear,
       extendsContent: (
@@ -496,8 +630,14 @@ const Player = () => {
 
   const onAudioPlay = useCallback(
     (info) => {
+      isHandoffPausedRef.current = false
       if (context && context.state !== 'running') {
         context.resume()
+      }
+
+      if (playerStateRef.current?.pendingState === 'paused' && audioInstance) {
+        audioInstance.pause()
+        return
       }
 
       dispatch(currentPlaying(info))
@@ -510,13 +650,23 @@ const Player = () => {
           const isNewTrack = info.trackId !== currentTrackId
           if (isNewTrack) {
             subsonic
-              .reportPlayback(info.trackId, posMs, 'starting')
+              .reportPlayback(info.trackId, posMs, 'starting', getReportExtra())
               .then(() =>
-                subsonic.reportPlayback(info.trackId, posMs, 'playing'),
+                subsonic.reportPlayback(
+                  info.trackId,
+                  posMs,
+                  'playing',
+                  getReportExtra(),
+                ),
               )
             setCurrentTrackId(info.trackId)
           } else {
-            subsonic.reportPlayback(info.trackId, posMs, 'playing')
+            subsonic.reportPlayback(
+              info.trackId,
+              posMs,
+              'playing',
+              getReportExtra(),
+            )
           }
           setHeartbeatTrackId(info.trackId)
         }
@@ -574,6 +724,8 @@ const Player = () => {
       currentTrackId,
       notifyRemoteError,
       translate,
+      audioInstance,
+      getReportExtra,
     ],
   )
 
@@ -595,24 +747,38 @@ const Player = () => {
       if (!info.isRadio && currentTrackId) {
         const posMs = Math.floor(info.currentTime * 1000)
         lastPositionMsRef.current = posMs
-        subsonic.reportPlayback(currentTrackId, posMs, 'paused')
+        subsonic.reportPlayback(
+          currentTrackId,
+          posMs,
+          'paused',
+          getReportExtra(),
+        )
       }
       setHeartbeatTrackId(null)
       lastUserPauseRef.current = Date.now()
       if (remoteActiveRef.current && remoteTrackRef.current) {
-        jukebox
-          .control(outputDeviceRef.current, 'pause')
-          .catch((e) => notifyRemoteError(translate('jukebox.errorControl'), e))
+        if (!isHandoffPausedRef.current) {
+          jukebox
+            .control(outputDeviceRef.current, 'pause')
+            .catch((e) =>
+              notifyRemoteError(translate('jukebox.errorControl'), e),
+            )
+        }
       }
     },
-    [dispatch, currentTrackId, notifyRemoteError, translate],
+    [dispatch, currentTrackId, notifyRemoteError, translate, getReportExtra],
   )
 
   const onAudioEnded = useCallback(
     (currentPlayId, audioLists, info) => {
       if (currentTrackId && !info.isRadio) {
         const posMs = Math.floor((info.duration || 0) * 1000)
-        subsonic.reportPlayback(currentTrackId, posMs, 'stopped')
+        subsonic.reportPlayback(
+          currentTrackId,
+          posMs,
+          'stopped',
+          getReportExtra(),
+        )
       }
       setHeartbeatTrackId(null)
       setCurrentTrackId(null)
@@ -624,7 +790,7 @@ const Player = () => {
         // eslint-disable-next-line no-console
         .catch((e) => console.log('Keepalive error:', e))
     },
-    [dispatch, dataProvider, currentTrackId],
+    [dispatch, dataProvider, currentTrackId, getReportExtra],
   )
 
   const onCoverClick = useCallback((mode, audioLists, audioInfo) => {
@@ -662,6 +828,7 @@ const Player = () => {
           currentTrackId,
           lastPositionMsRef.current,
           'stopped',
+          getReportExtra(),
         )
       }
       setHeartbeatTrackId(null)
@@ -676,7 +843,7 @@ const Player = () => {
       dispatch(clearQueue())
       reject()
     })
-  }, [dispatch, currentTrackId])
+  }, [dispatch, currentTrackId, getReportExtra])
 
   if (!visible) {
     document.title = 'Navidrome'
@@ -720,7 +887,12 @@ const Player = () => {
       }
       const posMs = Math.floor((audioInstance.currentTime || 0) * 1000)
       const state = audioInstance.paused ? 'paused' : 'playing'
-      subsonic.reportPlayback(currentTrackIdRef.current, posMs, state)
+      subsonic.reportPlayback(
+        currentTrackIdRef.current,
+        posMs,
+        state,
+        getReportExtra(),
+      )
     }
     const handleSeeked = () => {
       if (timer) clearTimeout(timer)
@@ -731,7 +903,7 @@ const Player = () => {
       if (timer) clearTimeout(timer)
       audioInstance.removeEventListener('seeked', handleSeeked)
     }
-  }, [audioInstance])
+  }, [audioInstance, getReportExtra])
 
   // Keep the local clock in sync with the remote output: correct position
   // drift, and follow play/pause/stop performed directly on the device
@@ -768,6 +940,10 @@ const Player = () => {
             case 'playing': {
               remotePlayingRef.current = true
               if (audioInstance.paused) {
+                // If this client was taken over by another device, do not auto-resume
+                if (isHandoffPausedRef.current) {
+                  break
+                }
                 // Resumed directly on the device (voice command, device button)
                 if (Date.now() - lastUserPauseRef.current > 3000) {
                   audioInstance.play().catch(() => {})
@@ -801,7 +977,14 @@ const Player = () => {
               // Remote stopped while we thought it was playing: the track
               // finished (or was stopped on the device). Advance the local
               // player to the end, so the queue keeps moving.
-              if (remotePlayingRef.current && !audioInstance.paused) {
+              // For devices without progress reporting (e.g. xiaomi), the local
+              // muted audioInstance maintains the clock and handles song completion
+              // via onAudioEnded. We must not force-skip on transient status.
+              if (
+                remotePlayingRef.current &&
+                !audioInstance.paused &&
+                !remoteNoProgressRef.current
+              ) {
                 remotePlayingRef.current = false
                 remoteTrackRef.current = null
                 const duration = audioInstance.duration

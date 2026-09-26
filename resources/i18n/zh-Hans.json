@@ -435,12 +435,13 @@
         "did": "设备 ID",
         "model": "型号",
         "account": "小米账号",
+        "passToken": "passToken 凭证",
         "textDirective": "文本指令",
         "source": "来源"
       },
       "types": {
         "xiaomi": "小米 / 小爱音箱",
-        "mpd": "MPD 服务器",
+        "mpd": "MPD 服务器本身",
         "dlna": "DLNA / UPnP 音箱"
       },
       "helpers": {
@@ -449,7 +450,9 @@
         "token": "32 位 hex 字符的 miIO 令牌，用于局域网控制。",
         "did": "可选的 miIO 设备 ID，留空会自动识别。",
         "model": "可选的音箱型号，例如 l7a、s12、l05b，用于决定播放参数。",
+        "account": "小米账号 (手机号/邮箱/小米 ID)，用于云端下发播放指令。",
         "accountPassword": "小米云端账号，局域网控制不可用时作为备用。",
+        "passToken": "小米云端 session passToken 凭证，配合 MI-PassToken-Helper 或扫码获取，免存明文密码。",
         "textDirective": "可选的播放指令覆盖，例如 5-5。",
         "pathFrom": "MPD 收到的路径是相对音乐库根目录的（如 songs/track.mp3），一般留空。仅当 MPD 曲库里的目录名与它不一致时填写要替换的那一段。",
         "pathTo": "替换后的路径前缀。",
@@ -803,7 +806,17 @@
   "nowPlaying": {
     "title": "正在播放",
     "empty": "无播放内容",
-    "minutesAgo": "%{smart_count} 分钟前"
+    "minutesAgo": "%{smart_count} 分钟前",
+    "takeoverTooltip": "在此设备接管播放",
+    "takeoverSuccess": "已从 %{time} 接管播放：%{title}",
+    "handoffPausedNotice": "播放已被「%{name}」接管，本地已暂停",
+    "otherDevice": "其他设备",
+    "webPlayer": "网页端",
+    "currentDevice": "当前设备",
+    "currentDeviceShort": "本机",
+    "currentlyPlayingHere": "当前正在本机播放",
+    "remoteOutputDevice": "输出设备",
+    "volume": "音量"
   },
   "help": {
     "title": "Navidrome 快捷键",

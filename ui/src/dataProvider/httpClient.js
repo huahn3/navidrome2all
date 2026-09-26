@@ -6,7 +6,21 @@ import { jwtDecode } from 'jwt-decode'
 
 const customAuthorizationHeader = 'X-ND-Authorization'
 export const clientUniqueIdHeader = 'X-ND-Client-Unique-Id'
-export const clientUniqueId = uuidv4()
+
+const getClientUniqueId = () => {
+  try {
+    let id = sessionStorage.getItem('nd-client-unique-id')
+    if (!id) {
+      id = uuidv4()
+      sessionStorage.setItem('nd-client-unique-id', id)
+    }
+    return id
+  } catch {
+    return uuidv4()
+  }
+}
+
+export const clientUniqueId = getClientUniqueId()
 
 const httpClient = (url, options = {}) => {
   url = baseUrl(url)

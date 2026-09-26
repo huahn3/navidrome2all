@@ -46,6 +46,10 @@ type PlaybackSession struct {
 	PositionMs   int64
 	PlaybackRate float64
 	LastReport   time.Time
+	OutputDevice string
+	Volume       int
+	PlayMode     string
+	Bilingual    bool
 
 	// Verdict from the last report, for the expiry callback: its context carries only
 	// a stub user, so it cannot evaluate the filter itself.
@@ -65,6 +69,10 @@ type ReportPlaybackParams struct {
 	IgnoreScrobble bool
 	ClientId       string
 	ClientName     string
+	OutputDevice   string
+	Volume         int
+	PlayMode       string
+	Bilingual      bool
 }
 
 type nowPlayingEntry struct {
@@ -298,6 +306,14 @@ func (p *playTracker) ReportPlayback(ctx context.Context, params ReportPlaybackP
 			return err
 		}
 		filtered = p.isFilteredOut(ctx, mf)
+		outDev := params.OutputDevice
+		if outDev == "" {
+			outDev = "browser"
+		}
+		vol := params.Volume
+		if vol == 0 {
+			vol = 100
+		}
 		info := PlaybackSession{
 			MediaFile:    *mf,
 			filtered:     filtered,
@@ -310,6 +326,10 @@ func (p *playTracker) ReportPlayback(ctx context.Context, params ReportPlaybackP
 			PositionMs:   params.PositionMs,
 			PlaybackRate: params.PlaybackRate,
 			LastReport:   now,
+			OutputDevice: outDev,
+			Volume:       vol,
+			PlayMode:     params.PlayMode,
+			Bilingual:    params.Bilingual,
 		}
 		p.sessionsMu.Lock()
 		// re-check: a concurrent "playing" report may have created the session during the load above
@@ -345,6 +365,20 @@ func (p *playTracker) ReportPlayback(ctx context.Context, params ReportPlaybackP
 		info.PositionMs = params.PositionMs
 		info.PlaybackRate = params.PlaybackRate
 		info.LastReport = now
+		if params.OutputDevice != "" {
+			info.OutputDevice = params.OutputDevice
+		} else if info.OutputDevice == "" {
+			info.OutputDevice = "browser"
+		}
+		if params.Volume > 0 {
+			info.Volume = params.Volume
+		} else if info.Volume == 0 {
+			info.Volume = 100
+		}
+		if params.PlayMode != "" {
+			info.PlayMode = params.PlayMode
+		}
+		info.Bilingual = params.Bilingual
 		filtered = p.isFilteredOut(ctx, &info.MediaFile)
 		info.filtered = filtered
 		ttl := 30 * time.Minute
@@ -401,10 +435,23 @@ func (p *playTracker) ReportPlayback(ctx context.Context, params ReportPlaybackP
 			PositionMs:   params.PositionMs,
 			PlaybackRate: params.PlaybackRate,
 			LastReport:   now,
+			OutputDevice: params.OutputDevice,
+			Volume:       params.Volume,
+			PlayMode:     params.PlayMode,
+			Bilingual:    params.Bilingual,
 		}
 		if getErr == nil {
 			stoppedInfo.MediaFile = info.MediaFile
 			stoppedInfo.Start = info.Start
+			if stoppedInfo.OutputDevice == "" {
+				stoppedInfo.OutputDevice = info.OutputDevice
+			}
+			if stoppedInfo.Volume == 0 {
+				stoppedInfo.Volume = info.Volume
+			}
+			if stoppedInfo.PlayMode == "" {
+				stoppedInfo.PlayMode = info.PlayMode
+			}
 		} else {
 			mf := loadedMF
 			if mf == nil {

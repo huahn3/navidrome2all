@@ -3,9 +3,12 @@ import { playerReducer } from './playerReducer'
 import {
   clearQueue,
   setOutputDevice,
+  takeoverTrack,
+  clearPendingSeek,
   PLAYER_SYNC_QUEUE,
   PLAYER_CURRENT,
   PLAYER_REFRESH_QUEUE,
+  EVENT_PLAYBACK_HANDOFF,
 } from '../actions'
 
 describe('playerReducer', () => {
@@ -250,6 +253,66 @@ describe('playerReducer', () => {
       expect(result.outputDevice).toBe('xiaoai')
       expect(result.queue).toEqual([])
       expect(result.clear).toBe(true)
+    })
+  })
+
+  describe('cross-client playback handoff', () => {
+    it('records received handoff event in state', () => {
+      const handoffData = {
+        targetSessionId: 'tab-1',
+        sourceSessionId: 'tab-2',
+        action: 'pause',
+        songId: 'song-123',
+        positionMs: 45000,
+        newPlayerName: 'Web (Chrome)',
+      }
+      const result = playerReducer(undefined, {
+        type: EVENT_PLAYBACK_HANDOFF,
+        data: handoffData,
+      })
+      expect(result.lastHandoff).toBeDefined()
+      expect(result.lastHandoff.targetSessionId).toBe('tab-1')
+      expect(result.lastHandoff.action).toBe('pause')
+      expect(result.lastHandoff._receivedAt).toBeGreaterThan(0)
+    })
+
+    it('inherits output device, volume, position, state, playMode, and bilingual in takeoverTrack', () => {
+      const songData = {
+        id: 'track-abc',
+        title: 'Heartless',
+        artist: 'Futuristic Swaver',
+      }
+      const positionSec = 51
+      const extraOptions = {
+        outputDevice: 'xiaomi_l7a',
+        volume: 65, // 65% should be converted to 0.65
+        state: 'paused',
+        playMode: 'single',
+        bilingualActive: true,
+      }
+
+      const state = playerReducer(
+        undefined,
+        takeoverTrack(songData, positionSec, extraOptions),
+      )
+
+      expect(state.queue).toHaveLength(1)
+      expect(state.queue[0].trackId).toBe('track-abc')
+      expect(state.playIndex).toBe(0)
+      expect(state.clear).toBe(true)
+      expect(state.pendingSeekTime).toBe(51)
+      expect(state.pendingState).toBe('paused')
+      expect(state.outputDevice).toBe('xiaomi_l7a')
+      expect(state.volume).toBe(0.65)
+      expect(state.mode).toBe('single')
+      expect(state.bilingualActive).toBe(true)
+
+      // Test clearPendingSeek clears both pendingSeekTime and pendingState
+      const clearedState = playerReducer(state, clearPendingSeek())
+      expect(clearedState.pendingSeekTime).toBeNull()
+      expect(clearedState.pendingState).toBeNull()
+      expect(clearedState.outputDevice).toBe('xiaomi_l7a')
+      expect(clearedState.volume).toBe(0.65)
     })
   })
 })

@@ -2,6 +2,7 @@ package nativeapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ type jukeboxOutputDTO struct {
 	DID           string `json:"did,omitempty"`
 	Model         string `json:"model,omitempty"`
 	Account       string `json:"account,omitempty"`
+	PassToken     string `json:"passToken,omitempty"`
 	TextDirective string `json:"textDirective,omitempty"`
 	// Source is "config" for outputs defined in the configuration file
 	// (read-only in the UI) and "ui" for outputs stored in the database.
@@ -41,7 +43,7 @@ func outputToDTO(dev conf.JukeboxOutputDevice, source string) jukeboxOutputDTO {
 		ID: dev.ID, Name: dev.Name, Type: strings.ToLower(dev.Type), Address: dev.Address,
 		Password: dev.Password, PathFrom: dev.PathFrom, PathTo: dev.PathTo,
 		Token: dev.Token, DID: dev.DID, Model: dev.Model, Account: dev.Account,
-		TextDirective: dev.TextDirective, Source: source,
+		PassToken: dev.PassToken, TextDirective: dev.TextDirective, Source: source,
 	}
 }
 
@@ -52,7 +54,7 @@ func outputFromDTO(dto jukeboxOutputDTO) conf.JukeboxOutputDevice {
 		Password: dto.Password, PathFrom: dto.PathFrom, PathTo: dto.PathTo,
 		Token: strings.TrimSpace(dto.Token), DID: strings.TrimSpace(dto.DID),
 		Model: strings.TrimSpace(dto.Model), Account: strings.TrimSpace(dto.Account),
-		TextDirective: strings.TrimSpace(dto.TextDirective),
+		PassToken: strings.TrimSpace(dto.PassToken), TextDirective: strings.TrimSpace(dto.TextDirective),
 	}
 }
 
@@ -67,6 +69,12 @@ func (api *Router) addJukeboxOutputsRoute(r chi.Router) {
 		r.Use(adminOnlyMiddleware)
 		r.Get("/", api.jukeboxListOutputs)
 		r.Post("/", api.jukeboxCreateOutput)
+		r.Route("/xiaomi", func(r chi.Router) {
+			r.Get("/qr/init", api.jukeboxXiaomiQRInit)
+			r.Post("/qr/poll", api.jukeboxXiaomiQRPoll)
+			r.Post("/login/password", api.jukeboxXiaomiPasswordLogin)
+			r.Post("/login/passtoken", api.jukeboxXiaomiPassTokenLogin)
+		})
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", api.jukeboxGetOutput)
 			r.Put("/", api.jukeboxUpdateOutput)
@@ -284,5 +292,118 @@ func (api *Router) jukeboxDiscover(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Total-Count", strconv.Itoa(len(renderers)))
 	if err := rest.RespondWithJSON(w, http.StatusOK, renderers); err != nil {
 		log.Error(r.Context(), "Error writing jukebox discovery response", err)
+	}
+}
+
+func (api *Router) jukeboxXiaomiQRInit(w http.ResponseWriter, r *http.Request) {
+	if !jukeboxOutputsGuard(w, r) {
+		return
+	}
+	info, err := jukebox.StartQRLogin()
+	if err != nil {
+		http.Error(w, "failed to start xiaomi qr login: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if err := rest.RespondWithJSON(w, http.StatusOK, info); err != nil {
+		log.Error(r.Context(), "Error writing xiaomi qr init response", err)
+	}
+}
+
+func (api *Router) jukeboxXiaomiQRPoll(w http.ResponseWriter, r *http.Request) {
+	if !jukeboxOutputsGuard(w, r) {
+		return
+	}
+	var req struct {
+		LP string `json:"lp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.LP == "" {
+		http.Error(w, "missing or invalid lp url in body", http.StatusBadRequest)
+		return
+	}
+	client, passToken, err := jukebox.PollQRLogin(req.LP)
+	if errors.Is(err, jukebox.ErrQRPending) {
+		_ = rest.RespondWithJSON(w, http.StatusOK, map[string]any{"status": "waiting"})
+		return
+	}
+	if err != nil {
+		http.Error(w, "qr login failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	devices, err := client.FetchDevices()
+	if err != nil {
+		log.Warn(r.Context(), "Failed to fetch xiaomi devices after qr login", "err", err)
+		devices = []jukebox.XiaomiDevice{}
+	}
+	if err := rest.RespondWithJSON(w, http.StatusOK, map[string]any{
+		"status":    "success",
+		"userId":    client.UserID(),
+		"passToken": passToken,
+		"devices":   devices,
+	}); err != nil {
+		log.Error(r.Context(), "Error writing xiaomi qr poll response", err)
+	}
+}
+
+func (api *Router) jukeboxXiaomiPasswordLogin(w http.ResponseWriter, r *http.Request) {
+	if !jukeboxOutputsGuard(w, r) {
+		return
+	}
+	var req struct {
+		Account  string `json:"account"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Account == "" || req.Password == "" {
+		http.Error(w, "missing account or password", http.StatusBadRequest)
+		return
+	}
+	client, passToken, err := jukebox.LoginWithPassword(req.Account, req.Password)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	devices, err := client.FetchDevices()
+	if err != nil {
+		log.Warn(r.Context(), "Failed to fetch xiaomi devices after password login", "err", err)
+		devices = []jukebox.XiaomiDevice{}
+	}
+	if err := rest.RespondWithJSON(w, http.StatusOK, map[string]any{
+		"status":    "success",
+		"userId":    client.UserID(),
+		"passToken": passToken,
+		"devices":   devices,
+	}); err != nil {
+		log.Error(r.Context(), "Error writing xiaomi password login response", err)
+	}
+}
+
+func (api *Router) jukeboxXiaomiPassTokenLogin(w http.ResponseWriter, r *http.Request) {
+	if !jukeboxOutputsGuard(w, r) {
+		return
+	}
+	var req struct {
+		UserID    string `json:"userId"`
+		PassToken string `json:"passToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" || req.PassToken == "" {
+		http.Error(w, "missing userId or passToken", http.StatusBadRequest)
+		return
+	}
+	client, err := jukebox.LoginWithPassToken(req.UserID, req.PassToken)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	devices, err := client.FetchDevices()
+	if err != nil {
+		log.Warn(r.Context(), "Failed to fetch xiaomi devices after passToken login", "err", err)
+		devices = []jukebox.XiaomiDevice{}
+	}
+	if err := rest.RespondWithJSON(w, http.StatusOK, map[string]any{
+		"status":    "success",
+		"userId":    client.UserID(),
+		"passToken": req.PassToken,
+		"devices":   devices,
+	}); err != nil {
+		log.Error(r.Context(), "Error writing xiaomi passToken login response", err)
 	}
 }

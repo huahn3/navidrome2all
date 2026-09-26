@@ -16,6 +16,7 @@ import ListItemText from '@material-ui/core/ListItemText'
 import Typography from '@material-ui/core/Typography'
 import { useForm } from 'react-final-form'
 import { discoverRenderers } from '../audioplayer/jukebox'
+import XiaomiAuthBlock from './XiaomiAuthBlock'
 
 const useScanStyles = makeStyles((theme) => ({
   scanBlock: {
@@ -72,6 +73,7 @@ const JukeboxOutputForm = ({ isCreate }) => (
       {({ formData }) =>
         formData.type === 'xiaomi' && (
           <>
+            <XiaomiAuthBlock formData={formData} isCreate={isCreate} />
             <TextInput
               source="token"
               fullWidth
@@ -85,10 +87,18 @@ const JukeboxOutputForm = ({ isCreate }) => (
               source="model"
               helperText="resources.jukeboxOutput.helpers.model"
             />
-            <TextInput source="account" />
+            <TextInput
+              source="account"
+              helperText="resources.jukeboxOutput.helpers.account"
+            />
             <PasswordInput
               source="password"
               helperText="resources.jukeboxOutput.helpers.accountPassword"
+            />
+            <TextInput
+              source="passToken"
+              fullWidth
+              helperText="resources.jukeboxOutput.helpers.passToken"
             />
             <TextInput
               source="textDirective"

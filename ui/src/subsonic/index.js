@@ -41,14 +41,21 @@ const url = (command, id, options) => {
 
 const ping = () => httpClient(url('ping'))
 
-const reportPlaybackUrl = (mediaId, positionMs, state) =>
-  url('reportPlayback', null, { mediaId, mediaType: 'song', positionMs, state })
+const reportPlaybackUrl = (mediaId, positionMs, state, extra = {}) => {
+  const params = { mediaId, mediaType: 'song', positionMs, state }
+  if (extra.outputDevice) params.outputDevice = extra.outputDevice
+  if (extra.volume != null && !isNaN(extra.volume)) params.volume = extra.volume
+  if (extra.playMode) params.playMode = extra.playMode
+  if (extra.bilingualActive != null)
+    params.bilingualActive = extra.bilingualActive
+  return url('reportPlayback', null, params)
+}
 
-const reportPlayback = (mediaId, positionMs, state) =>
-  httpClient(reportPlaybackUrl(mediaId, positionMs, state))
+const reportPlayback = (mediaId, positionMs, state, extra = {}) =>
+  httpClient(reportPlaybackUrl(mediaId, positionMs, state, extra))
 
-const reportPlaybackKeepalive = (mediaId, positionMs, state) => {
-  const u = reportPlaybackUrl(mediaId, positionMs, state)
+const reportPlaybackKeepalive = (mediaId, positionMs, state, extra = {}) => {
+  const u = reportPlaybackUrl(mediaId, positionMs, state, extra)
   if (u) {
     fetch(baseUrl(u), {
       keepalive: true,

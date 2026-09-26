@@ -184,6 +184,16 @@ var _ = Describe("MediaAnnotationController", func() {
 			Expect(playTracker.ReportedPlayback[0].ClientId).To(Equal("p1"))
 			Expect(playTracker.ReportedPlayback[0].ClientName).To(BeEmpty())
 		})
+
+		It("propagates player.Name to ClientName when player is identified", func() {
+			r := newGetRequest("mediaId=123", "mediaType=song", "positionMs=5000", "state=playing", "c=NavidromeUI")
+			ctx := request.WithPlayer(r.Context(), model.Player{ID: "p1", Name: "NavidromeUI [Chrome/macOS]"})
+			r = r.WithContext(ctx)
+			_, err := router.ReportPlayback(r)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(playTracker.ReportedPlayback).To(HaveLen(1))
+			Expect(playTracker.ReportedPlayback[0].ClientName).To(Equal("NavidromeUI [Chrome/macOS]"))
+		})
 	})
 
 	Describe("Star/Unstar playlists", func() {

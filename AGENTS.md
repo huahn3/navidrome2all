@@ -27,7 +27,8 @@ Navidrome 的私有 fork，核心二开包含两大能力：
 - 面向人的功能文档：`docs/jukebox.md`（多输出端配置/API/驱动行为/故障排查）、
   `docs/jukebox-api.md`（多输出端 Jukebox API 与第三方客户端集成指南）、
   `docs/jukebox-nas-deployment.md`（NAS 部署）、`docs/xiaomi-speakers.md`（小米协议调研）、
-  `docs/lyrics-translation-api.md`（歌词翻译 API 与第三方客户端集成）。
+  `docs/lyrics-translation-api.md`（歌词翻译 API 与第三方客户端集成）、
+  `docs/playback-handoff-api.md`（活跃会话与多端同步接管 API 集成指南）。
 
 ## 2. 常用命令
 
@@ -280,7 +281,7 @@ resources/i18n/*.json    后端 i18n（zh-Hans/zh-Hant 含 jukebox 与翻译文�
 ui/src/i18n/*.json       前端 i18n
 docs/                    面向人的文档（见第 1 节）
 contrib/jukebox-testing/ 假 MPD / 假 DLNA 服务器（不接真设备复现链路）
-.claude/skills/ .qoder/skills/  AI 技能：build-and-test、add-jukebox-driver、jukebox-e2e、nas-jukebox-deploy、lyrics-translation
+.claude/skills/ .qoder/skills/  AI 技能：build-and-test、add-jukebox-driver、jukebox-e2e、nas-jukebox-deploy、lyrics-translation、playback-handoff
 ```
 
 ## 8. 改动验收清单

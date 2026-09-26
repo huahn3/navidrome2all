@@ -433,6 +433,7 @@
         "did": "設備 ID",
         "model": "型號",
         "account": "小米帳號",
+        "passToken": "passToken 憑證",
         "textDirective": "文字指令",
         "source": "來源"
       },
@@ -447,7 +448,9 @@
         "token": "32 位 hex 字元的 miIO 令牌，用於區域網路控制。",
         "did": "可選的 miIO 設備 ID，留空會自動識別。",
         "model": "可選的音箱型號，例如 l7a、s12、l05b，用於決定播放參數。",
+        "account": "小米帳號 (手機號/信箱/小米 ID)，用於雲端發布播放指令。",
         "accountPassword": "小米雲端帳號，區域網路控制不可用時作為備用。",
+        "passToken": "小米雲端 session passToken 憑證，配合 MI-PassToken-Helper 或掃碼獲取，免存明文密碼。",
         "textDirective": "可選的播放指令覆寫，例如 5-5。",
         "pathFrom": "MPD 收到的路徑是相對音樂庫根目錄的（如 songs/track.mp3），一般留空。僅當 MPD 曲庫裡的目錄名與它不一致時填寫要替換的那一段。",
         "pathTo": "替換後的路徑前綴。",
@@ -815,7 +818,17 @@
   "nowPlaying": {
     "title": "正在播放",
     "empty": "無播放內容",
-    "minutesAgo": "1 分鐘前 |||| %{smart_count} 分鐘前"
+    "minutesAgo": "1 分鐘前 |||| %{smart_count} 分鐘前",
+    "takeoverTooltip": "在此裝置接管播放",
+    "takeoverSuccess": "已從 %{time} 接管播放：%{title}",
+    "handoffPausedNotice": "播放已被「%{name}」接管，本機已暫停",
+    "otherDevice": "其他設備",
+    "webPlayer": "網頁端",
+    "currentDevice": "目前裝置",
+    "currentDeviceShort": "本機",
+    "currentlyPlayingHere": "目前正在本機播放",
+    "remoteOutputDevice": "輸出裝置",
+    "volume": "音量"
   },
   "jukebox": {
     "outputDevice": "聲音輸出",

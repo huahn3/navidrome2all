@@ -102,3 +102,26 @@ export const formatNumber = (value, locale) => {
   if (value === null || value === undefined) return '0'
   return value.toLocaleString(locale)
 }
+
+export const formatDeviceName = (playerName) => {
+  if (!playerName) return ''
+  const trimmed = playerName.trim()
+  const naviMatch = trimmed.match(/^NavidromeUI\s*\[([^\]]+)\]$/i)
+  if (naviMatch) {
+    const raw = naviMatch[1]
+    return raw.replace('/', ' · ')
+  }
+  const clientMatch = trimmed.match(/^(.+?)\s*\[([^\]]+)\]$/)
+  if (clientMatch) {
+    const client = clientMatch[1]
+    const extra = clientMatch[2].replace('/', ' · ')
+    if (client.toLowerCase() === 'navidromeui') {
+      return extra
+    }
+    return `${client} (${extra})`
+  }
+  if (trimmed.toLowerCase() === 'navidromeui') {
+    return '网页端'
+  }
+  return trimmed
+}

@@ -226,6 +226,11 @@ func (api *Router) scrobblerNowPlaying(ctx context.Context, trackId string, posi
 		clientId = player.ID
 	}
 
+	clientName := player.Name
+	if clientName == "" {
+		clientName = client
+	}
+
 	log.Info(ctx, "Now Playing", "title", mf.Title, "artist", mf.Artist, "user", username, "player", player.Name, "position", position)
 	return api.scrobbler.ReportPlayback(ctx, scrobbler.ReportPlaybackParams{
 		MediaId:      trackId,
@@ -233,7 +238,7 @@ func (api *Router) scrobblerNowPlaying(ctx context.Context, trackId string, posi
 		State:        scrobbler.StatePlaying,
 		PlaybackRate: 1.0,
 		ClientId:     clientId,
-		ClientName:   client,
+		ClientName:   clientName,
 	})
 }
 
@@ -281,6 +286,16 @@ func (api *Router) ReportPlayback(r *http.Request) (*responses.Subsonic, error) 
 		clientId = player.ID
 	}
 
+	clientName := player.Name
+	if clientName == "" {
+		clientName = client
+	}
+
+	outputDevice, _ := p.String("outputDevice")
+	volume := p.IntOr("volume", 0)
+	playMode, _ := p.String("playMode")
+	bilingual := p.BoolOr("bilingualActive", false)
+
 	err = api.scrobbler.ReportPlayback(ctx, scrobbler.ReportPlaybackParams{
 		MediaId:        mediaId,
 		PositionMs:     positionMs,
@@ -288,7 +303,11 @@ func (api *Router) ReportPlayback(r *http.Request) (*responses.Subsonic, error) 
 		PlaybackRate:   playbackRate,
 		IgnoreScrobble: ignoreScrobble,
 		ClientId:       clientId,
-		ClientName:     client,
+		ClientName:     clientName,
+		OutputDevice:   outputDevice,
+		Volume:         volume,
+		PlayMode:       playMode,
+		Bilingual:      bilingual,
 	})
 	if err != nil {
 		log.Error(ctx, "Error in ReportPlayback", "mediaId", mediaId, "state", state, err)

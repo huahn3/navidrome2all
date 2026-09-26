@@ -11,6 +11,8 @@ export const TRANSCODING_SET_PROFILE = 'TRANSCODING_SET_PROFILE'
 export const PLAYER_REFRESH_QUEUE = 'PLAYER_REFRESH_QUEUE'
 export const PLAYER_SET_OUTPUT_DEVICE = 'PLAYER_SET_OUTPUT_DEVICE'
 export const PLAYER_UPDATE_SONG_LYRIC = 'PLAYER_UPDATE_SONG_LYRIC'
+export const PLAYER_TAKEOVER_TRACK = 'PLAYER_TAKEOVER_TRACK'
+export const PLAYER_CLEAR_PENDING_SEEK = 'PLAYER_CLEAR_PENDING_SEEK'
 
 // The built-in output: play locally in this browser
 export const BROWSER_DEVICE = 'browser'
@@ -18,6 +20,17 @@ export const BROWSER_DEVICE = 'browser'
 export const setTrack = (data) => ({
   type: PLAYER_SET_TRACK,
   data,
+})
+
+export const takeoverTrack = (data, positionSec, extraOptions = {}) => ({
+  type: PLAYER_TAKEOVER_TRACK,
+  data,
+  positionSec,
+  extraOptions,
+})
+
+export const clearPendingSeek = () => ({
+  type: PLAYER_CLEAR_PENDING_SEEK,
 })
 
 export const setOutputDevice = (deviceId) => ({

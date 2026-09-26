@@ -275,6 +275,52 @@ func (f *fakeXiaomiCloud) handleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	signedSum := sha256.Sum256(append(ssecBytes, nonceBytes...))
 	signedNonce := base64.StdEncoding.EncodeToString(signedSum[:])
+
+	if r.Header.Get("MIOT-ENCRYPT-ALGORITHM") == "ENCRYPT-RC4" {
+		expected := calcEncSignature("/miotspec/action", http.MethodPost, signedNonce, [][2]string{
+			{"data", data},
+			{"rc4_hash__", r.Form.Get("rc4_hash__")},
+		})
+		if signature != expected {
+			f.signErr = fmt.Errorf("bad signature: got %q want %q", signature, expected)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		rawEncData, err := base64.StdEncoding.DecodeString(data)
+		if err != nil {
+			f.signErr = err
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		decData, err := rc4Crypt(signedNonce, rawEncData)
+		if err != nil {
+			f.signErr = err
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var p struct {
+			Params fakeCloudAction `json:"params"`
+			fakeCloudAction
+		}
+		if err := json.Unmarshal(decData, &p); err != nil {
+			f.signErr = err
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		action := p.fakeCloudAction
+		if p.Params.DID != "" {
+			action = p.Params
+		}
+		f.mu.Lock()
+		f.actions = append(f.actions, action)
+		f.mu.Unlock()
+
+		respPayload := []byte(`{"code":0,"result":{"code":0}}`)
+		encResp, _ := rc4Crypt(signedNonce, respPayload)
+		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString(encResp)))
+		return
+	}
+
 	signBase := strings.Join([]string{"/miotspec/action", signedNonce, nonce, "data=" + data, f.ssecurity}, "&")
 	expected := base64.StdEncoding.EncodeToString(func() []byte { s := sha1.Sum([]byte(signBase)); return s[:] }())
 	if signature != expected {

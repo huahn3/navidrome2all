@@ -17,13 +17,16 @@ import {
   LinearProgress,
   useTheme,
   useMediaQuery,
+  Chip,
 } from '@material-ui/core'
-import { FaRegCirclePlay, FaPause } from 'react-icons/fa6'
+import { FaRegCirclePlay, FaPause, FaPlay } from 'react-icons/fa6'
 import subsonic from '../subsonic'
+import httpClient, { clientUniqueId } from '../dataProvider/httpClient'
 import { useInterval } from '../common'
-import { nowPlayingCountSync } from '../actions'
-import { formatDuration } from '../utils'
+import { nowPlayingCountSync, takeoverTrack } from '../actions'
+import { formatDuration, formatDeviceName } from '../utils'
 import config from '../config'
+import * as jukebox from '../audioplayer/jukebox'
 
 const useStyles = makeStyles((theme) => ({
   button: { color: 'inherit' },
@@ -48,9 +51,19 @@ const useStyles = makeStyles((theme) => ({
   },
   listItem: {
     display: 'flex',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: theme.spacing(1.5),
     padding: theme.spacing(1),
+    cursor: 'pointer',
+    position: 'relative',
+    transition: 'background-color 0.15s ease',
+    borderRadius: theme.spacing(0.5),
+    '&:hover': {
+      backgroundColor: theme.palette.action.hover,
+    },
+    '&:hover $takeoverButton': {
+      opacity: 1,
+    },
   },
   avatarContainer: {
     position: 'relative',
@@ -140,11 +153,71 @@ const useStyles = makeStyles((theme) => ({
     color: theme.palette.text.disabled,
     marginTop: theme.spacing(0.25),
   },
+  takeoverButton: {
+    opacity: 0.7,
+    padding: theme.spacing(0.75),
+    color: theme.palette.primary.main,
+    transition: 'opacity 0.2s, transform 0.15s',
+    alignSelf: 'center',
+    flexShrink: 0,
+    '&:hover': {
+      opacity: 1,
+      transform: 'scale(1.15)',
+    },
+  },
   badge: {
     '& .MuiBadge-badge': {
       backgroundColor: theme.palette.primary.main,
       color: theme.palette.primary.contrastText,
     },
+  },
+  currentDeviceBadge: {
+    marginLeft: theme.spacing(0.75),
+    padding: '1px 5px',
+    borderRadius: 3,
+    fontSize: '0.625rem',
+    fontWeight: 600,
+    backgroundColor: theme.palette.primary.main,
+    color: theme.palette.primary.contrastText,
+    display: 'inline-block',
+    lineHeight: '1.3',
+    verticalAlign: 'middle',
+  },
+  remoteOutputBadge: {
+    marginLeft: theme.spacing(0.75),
+    padding: '1px 5px',
+    borderRadius: 3,
+    fontSize: '0.625rem',
+    fontWeight: 600,
+    backgroundColor: theme.palette.secondary.main,
+    color: theme.palette.secondary.contrastText,
+    display: 'inline-block',
+    lineHeight: '1.3',
+    verticalAlign: 'middle',
+  },
+  volumeBadge: {
+    marginLeft: theme.spacing(0.5),
+    padding: '1px 4px',
+    borderRadius: 3,
+    fontSize: '0.6rem',
+    fontWeight: 500,
+    backgroundColor: theme.palette.action.selected,
+    color: theme.palette.text.secondary,
+    display: 'inline-block',
+    lineHeight: '1.3',
+    verticalAlign: 'middle',
+  },
+  currentDeviceChipWrapper: {
+    alignSelf: 'center',
+    flexShrink: 0,
+    padding: theme.spacing(0.25),
+  },
+  currentDeviceChip: {
+    height: 22,
+    fontSize: '0.7rem',
+    fontWeight: 500,
+    borderColor: theme.palette.primary.main,
+    color: theme.palette.primary.main,
   },
 }))
 
@@ -182,8 +255,16 @@ NowPlayingButton.propTypes = {
 }
 
 const NowPlayingItem = React.memo(
-  ({ nowPlayingEntry, onLinkClick, getArtistLink, now }) => {
+  ({
+    nowPlayingEntry,
+    deviceNames,
+    onLinkClick,
+    getArtistLink,
+    onTakeover,
+    now,
+  }) => {
     const classes = useStyles()
+    const translate = useTranslate()
     const isPaused = nowPlayingEntry.state === 'paused'
     const isPlaying =
       nowPlayingEntry.state === 'playing' ||
@@ -198,18 +279,53 @@ const NowPlayingItem = React.memo(
     const clampedMs = Math.max(0, interpolatedMs)
     const positionMs =
       durationMs > 0 ? Math.min(clampedMs, durationMs) : clampedMs
-    const positionSec = positionMs / 1000
+    const positionSec = Math.floor(positionMs / 1000)
     const durationSec = nowPlayingEntry.duration || 0
-    const progress = durationSec > 0 ? (positionSec / durationSec) * 100 : 0
+    const progress =
+      durationSec > 0 ? (positionMs / 1000 / durationSec) * 100 : 0
     const artistId = nowPlayingEntry.albumArtistId || nowPlayingEntry.artistId
     const artistName = nowPlayingEntry.albumArtist || nowPlayingEntry.artist
 
+    const isCurrent =
+      Boolean(nowPlayingEntry.isCurrentSession) ||
+      (nowPlayingEntry.sessionId &&
+        nowPlayingEntry.sessionId === clientUniqueId) ||
+      (nowPlayingEntry.playerId && nowPlayingEntry.playerId === clientUniqueId)
+
+    const displayDevice = formatDeviceName(nowPlayingEntry.playerName)
+    const outputDevice = nowPlayingEntry.outputDevice
+    const isRemoteOutput = Boolean(outputDevice && outputDevice !== 'browser')
+    const outputDeviceName = isRemoteOutput
+      ? (deviceNames && deviceNames[outputDevice]) || outputDevice
+      : ''
+
+    const handleItemClick = () => {
+      if (isCurrent) return
+      onTakeover(nowPlayingEntry, positionSec, nowPlayingEntry.state)
+    }
+
+    const handleButtonClick = (e) => {
+      e.stopPropagation()
+      if (isCurrent) return
+      onTakeover(nowPlayingEntry, positionSec, 'playing')
+    }
+
+    const handleAvatarClick = (e) => {
+      e.stopPropagation()
+      onLinkClick()
+    }
+
+    const handleArtistClick = (e) => {
+      e.stopPropagation()
+      onLinkClick()
+    }
+
     return (
-      <ListItem className={classes.listItem}>
+      <ListItem className={classes.listItem} onClick={handleItemClick}>
         <div className={classes.avatarContainer}>
           <Link
             to={`/album/${nowPlayingEntry.albumId}/show`}
-            onClick={onLinkClick}
+            onClick={handleAvatarClick}
           >
             <Avatar
               className={classes.avatar}
@@ -236,7 +352,7 @@ const NowPlayingItem = React.memo(
             <Link
               to={getArtistLink(artistId)}
               className={classes.artistLink}
-              onClick={onLinkClick}
+              onClick={handleArtistClick}
             >
               {artistName}
             </Link>
@@ -266,11 +382,65 @@ const NowPlayingItem = React.memo(
           </div>
           <Typography className={classes.userInfo}>
             {nowPlayingEntry.username}
-            {nowPlayingEntry.playerName
-              ? ` (${nowPlayingEntry.playerName})`
-              : ''}
+            {displayDevice ? ` (${displayDevice})` : ''}
+            {isCurrent && (
+              <span className={classes.currentDeviceBadge}>
+                {translate('nowPlaying.currentDeviceShort') || '本机'}
+              </span>
+            )}
+            {isRemoteOutput && (
+              <span
+                className={classes.remoteOutputBadge}
+                title={translate('nowPlaying.remoteOutputDevice') || '输出设备'}
+              >
+                {`🔊 ${outputDeviceName}`}
+              </span>
+            )}
+            {typeof nowPlayingEntry.volume === 'number' &&
+              nowPlayingEntry.volume > 0 && (
+                <span
+                  className={classes.volumeBadge}
+                  title={translate('nowPlaying.volume') || '音量'}
+                >
+                  {`${nowPlayingEntry.volume}%`}
+                </span>
+              )}
           </Typography>
         </div>
+        {isCurrent ? (
+          <Tooltip
+            title={
+              translate('nowPlaying.currentlyPlayingHere') || '当前正在本机播放'
+            }
+          >
+            <span className={classes.currentDeviceChipWrapper}>
+              <Chip
+                size="small"
+                label={translate('nowPlaying.currentDeviceShort') || '本机'}
+                color="primary"
+                variant="outlined"
+                className={classes.currentDeviceChip}
+              />
+            </span>
+          </Tooltip>
+        ) : (
+          <Tooltip
+            title={
+              translate('nowPlaying.takeoverTooltip') || '在此设备接管播放'
+            }
+          >
+            <IconButton
+              size="small"
+              className={classes.takeoverButton}
+              onClick={handleButtonClick}
+              aria-label={
+                translate('nowPlaying.takeoverTooltip') || '在此设备接管播放'
+              }
+            >
+              <FaPlay size={13} />
+            </IconButton>
+          </Tooltip>
+        )}
       </ListItem>
     )
   },
@@ -280,10 +450,12 @@ NowPlayingItem.displayName = 'NowPlayingItem'
 
 NowPlayingItem.propTypes = {
   nowPlayingEntry: PropTypes.shape({
-    playerId: PropTypes.oneOfType([PropTypes.string, PropTypes.number])
-      .isRequired,
-    albumId: PropTypes.oneOfType([PropTypes.string, PropTypes.number])
-      .isRequired,
+    id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    songId: PropTypes.string,
+    playerId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    sessionId: PropTypes.string,
+    isCurrentSession: PropTypes.bool,
+    albumId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
     albumArtistId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
     artistId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
     albumArtist: PropTypes.string,
@@ -295,15 +467,34 @@ NowPlayingItem.propTypes = {
     state: PropTypes.string,
     positionMs: PropTypes.number,
     duration: PropTypes.number,
+    updatedAt: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    outputDevice: PropTypes.string,
+    volume: PropTypes.number,
+    playMode: PropTypes.string,
+    bilingual: PropTypes.bool,
   }).isRequired,
+  deviceNames: PropTypes.object,
   onLinkClick: PropTypes.func.isRequired,
   getArtistLink: PropTypes.func.isRequired,
+  onTakeover: PropTypes.func.isRequired,
   now: PropTypes.number.isRequired,
 }
 
 // NowPlayingList component - handles the popover content
 const NowPlayingList = React.memo(
-  ({ anchorEl, open, onClose, entries, onLinkClick, getArtistLink, now }) => {
+  ({
+    anchorEl,
+    open,
+    onClose,
+    entries,
+    deviceNames,
+    onLinkClick,
+    getArtistLink,
+    onTakeover,
+    onMouseEnter,
+    onMouseLeave,
+    now,
+  }) => {
     const classes = useStyles({ entryCount: entries.length })
     const translate = useTranslate()
 
@@ -316,6 +507,10 @@ const NowPlayingList = React.memo(
         open={open}
         onClose={onClose}
         aria-labelledby="now-playing-title"
+        PaperProps={{
+          onMouseEnter,
+          onMouseLeave,
+        }}
       >
         <Card className={classes.card}>
           <CardContent className={classes.cardContent}>
@@ -331,10 +526,12 @@ const NowPlayingList = React.memo(
               >
                 {entries.map((nowPlayingEntry) => (
                   <NowPlayingItem
-                    key={`${nowPlayingEntry.username}-${nowPlayingEntry.playerName}`}
+                    key={`${nowPlayingEntry.sessionId || nowPlayingEntry.playerId || ''}-${nowPlayingEntry.username}-${nowPlayingEntry.playerName}-${nowPlayingEntry.id || nowPlayingEntry.songId || nowPlayingEntry.title}`}
                     nowPlayingEntry={nowPlayingEntry}
+                    deviceNames={deviceNames}
                     onLinkClick={onLinkClick}
                     getArtistLink={getArtistLink}
+                    onTakeover={onTakeover}
                     now={now}
                   />
                 ))}
@@ -354,8 +551,12 @@ NowPlayingList.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   entries: PropTypes.arrayOf(PropTypes.object).isRequired,
+  deviceNames: PropTypes.object,
   onLinkClick: PropTypes.func.isRequired,
   getArtistLink: PropTypes.func.isRequired,
+  onTakeover: PropTypes.func.isRequired,
+  onMouseEnter: PropTypes.func,
+  onMouseLeave: PropTypes.func,
   now: PropTypes.number.isRequired,
 }
 
@@ -370,6 +571,8 @@ const NowPlayingPanel = () => {
   const serverUp = useSelector(
     (state) => !!state.activity.serverStart.startTime,
   )
+  const outputDevice =
+    useSelector((state) => state.player?.outputDevice) || 'browser'
   const translate = useTranslate()
   const notify = useNotify()
   const theme = useTheme()
@@ -377,16 +580,72 @@ const NowPlayingPanel = () => {
 
   const [anchorEl, setAnchorEl] = useState(null)
   const [entries, setEntries] = useState([])
+  const [deviceNames, setDeviceNames] = useState({})
   const [now, setNow] = useState(Date.now())
   const open = Boolean(anchorEl)
+  const hoverTimeoutRef = useRef(null)
+  const isClickOpenRef = useRef(false)
 
-  const handleMenuOpen = useCallback((event) => {
-    setAnchorEl(event.currentTarget)
+  const loadDeviceNames = useCallback(() => {
+    if (config.jukeboxEnabled) {
+      jukebox
+        .fetchDevices()
+        .then((data) => {
+          const map = {}
+          ;(data?.devices || []).forEach((d) => {
+            map[d.id] = d.name
+          })
+          setDeviceNames(map)
+        })
+        .catch(() => {})
+    }
   }, [])
+
+  useEffect(() => {
+    loadDeviceNames()
+  }, [loadDeviceNames])
+
+  const clearHoverTimeout = useCallback(() => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+      hoverTimeoutRef.current = null
+    }
+  }, [])
+
+  const handleMouseEnter = useCallback(
+    (event) => {
+      clearHoverTimeout()
+      const target = event.currentTarget
+      hoverTimeoutRef.current = setTimeout(() => {
+        setAnchorEl(target)
+      }, 150)
+    },
+    [clearHoverTimeout],
+  )
+
+  const handleMouseLeave = useCallback(() => {
+    clearHoverTimeout()
+    if (isClickOpenRef.current) return
+    hoverTimeoutRef.current = setTimeout(() => {
+      setAnchorEl(null)
+    }, 280)
+  }, [clearHoverTimeout])
+
+  const handleMenuOpen = useCallback(
+    (event) => {
+      clearHoverTimeout()
+      isClickOpenRef.current = true
+      setAnchorEl(event.currentTarget)
+      loadDeviceNames()
+    },
+    [clearHoverTimeout, loadDeviceNames],
+  )
 
   const handleMenuClose = useCallback(() => {
+    clearHoverTimeout()
+    isClickOpenRef.current = false
     setAnchorEl(null)
-  }, [])
+  }, [clearHoverTimeout])
 
   // Close panel when link is clicked on small screens
   const handleLinkClick = useCallback(() => {
@@ -401,6 +660,109 @@ const NowPlayingPanel = () => {
       ? `/artist/${artistId}/show`
       : `/album?filter={"artist_id":"${artistId}"}&order=ASC&sort=max_year&displayedFilters={"compilation":true}&perPage=15`
   }, [])
+
+  const handleTakeover = useCallback(
+    async (entry, posSec, requestedState) => {
+      try {
+        let songData = null
+        try {
+          const songId = entry.id || entry.songId
+          if (songId) {
+            const res = await subsonic.getSong(songId)
+            const data = res?.json?.['subsonic-response']
+            if (data?.status === 'ok' && data.song) {
+              songData = data.song
+            }
+          }
+        } catch {
+          // ignore
+        }
+
+        if (!songData) {
+          songData = {
+            id: entry.id || entry.songId,
+            title: entry.title,
+            artist: entry.artist,
+            album: entry.album,
+            albumId: entry.albumId,
+            duration: entry.duration,
+            updatedAt: entry.updatedAt,
+          }
+        }
+
+        const inheritedOutput = entry.outputDevice || 'browser'
+        const inheritedVolume =
+          typeof entry.volume === 'number' && entry.volume > 0
+            ? entry.volume / 100
+            : undefined
+        const targetState = requestedState || entry.state || 'playing'
+        const playMode = entry.playMode
+        const bilingualActive =
+          entry.bilingual != null ? entry.bilingual : entry.bilingualActive
+
+        dispatch(
+          takeoverTrack(songData, posSec, {
+            outputDevice: inheritedOutput,
+            volume: inheritedVolume,
+            state: targetState,
+            playMode,
+            bilingualActive,
+          }),
+        )
+
+        // If target output device is remote, ensure it is selected on server
+        if (inheritedOutput && inheritedOutput !== 'browser') {
+          jukebox.selectDevice(inheritedOutput).catch(() => {})
+        }
+
+        const targetSessionId = entry.sessionId || entry.playerId
+        if (targetSessionId) {
+          httpClient(
+            `/api/playback/sessions/${encodeURIComponent(targetSessionId)}/takeover`,
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                action: 'pause',
+                sourceSessionId: clientUniqueId,
+                newPlayerName: translate('nowPlaying.webPlayer') || '网页端',
+                targetOutput: inheritedOutput,
+              }),
+            },
+          )
+            .then(() => {
+              if (doFetchRef.current) {
+                setTimeout(doFetchRef.current, 250)
+              }
+            })
+            .catch(() => {})
+        }
+
+        // Optimistically update entries and badge count so the change is instant without page reload
+        setEntries((prev) => {
+          const next = prev.filter(
+            (e) => (e.sessionId || e.playerId) !== targetSessionId,
+          )
+          dispatch(nowPlayingCountSync({ count: next.length }))
+          return next
+        })
+
+        notify(
+          translate('nowPlaying.takeoverSuccess', {
+            title: entry.title,
+            time: formatDuration(posSec),
+          }) || `已从 ${formatDuration(posSec)} 接管播放：${entry.title}`,
+          { type: 'info' },
+        )
+        handleMenuClose()
+      } catch (err) {
+        notify('ra.page.error', {
+          type: 'warning',
+          messageArgs: { error: err.message || 'Takeover failed' },
+        })
+      }
+    },
+    [dispatch, notify, translate, handleMenuClose],
+  )
 
   const fetchTimerRef = useRef(null)
   const doFetchRef = useRef()
@@ -438,6 +800,7 @@ const NowPlayingPanel = () => {
   useEffect(() => {
     return () => {
       if (fetchTimerRef.current) clearTimeout(fetchTimerRef.current)
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
     }
   }, [])
 
@@ -446,10 +809,12 @@ const NowPlayingPanel = () => {
     if (serverUp) fetchList()
   }, [fetchList, serverUp, streamReconnected])
 
-  // Refresh when NowPlaying updates from SSE events (if panel is open)
+  // Refresh immediately when NowPlaying updates from SSE events or panel is opened
   useEffect(() => {
-    if (open && serverUp) fetchList()
-  }, [lastUpdate, open, fetchList, serverUp])
+    if (open && serverUp) {
+      if (doFetchRef.current) doFetchRef.current()
+    }
+  }, [lastUpdate, open, serverUp])
 
   // Update current time every second when open to animate progress bars
   useInterval(() => setNow(Date.now()), open ? 1000 : null)
@@ -471,16 +836,24 @@ const NowPlayingPanel = () => {
   )
 
   return (
-    <div>
+    <div
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      style={{ display: 'inline-flex' }}
+    >
       <NowPlayingButton count={count} onClick={handleMenuOpen} />
       <NowPlayingList
         anchorEl={anchorEl}
         open={open}
         onClose={handleMenuClose}
         entries={entries}
+        deviceNames={deviceNames}
         now={now}
         onLinkClick={handleLinkClick}
         getArtistLink={getArtistLink}
+        onTakeover={handleTakeover}
+        onMouseEnter={clearHoverTimeout}
+        onMouseLeave={handleMouseLeave}
       />
     </div>
   )

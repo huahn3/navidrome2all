@@ -15,6 +15,9 @@ import {
   PLAYER_SET_MODE,
   PLAYER_REFRESH_QUEUE,
   PLAYER_UPDATE_SONG_LYRIC,
+  PLAYER_TAKEOVER_TRACK,
+  PLAYER_CLEAR_PENDING_SEEK,
+  EVENT_PLAYBACK_HANDOFF,
 } from '../actions'
 import config from '../config'
 
@@ -28,6 +31,8 @@ const initialState = {
   bilingualActive: false,
   originalLyrics: {},
   bilingualLyrics: {},
+  pendingSeekTime: null,
+  lastHandoff: null,
 }
 
 const pad = (value) => {
@@ -152,6 +157,65 @@ const reduceSetTrack = (state, { data }) => {
     originalLyrics,
   }
 }
+
+const reduceTakeoverTrack = (
+  state,
+  { data, positionSec, extraOptions = {} },
+) => {
+  const item = mapToAudioLists(data)
+  const originalLyrics = { ...state.originalLyrics }
+  if (item.trackId && item.lyric) {
+    originalLyrics[item.trackId] = item.lyric
+  }
+
+  // 1. Output Device: inherit target output device if specified
+  const targetOutputDevice =
+    extraOptions.outputDevice || state.outputDevice || BROWSER_DEVICE
+
+  // 2. Volume: inherit target volume (convert 0-100 to 0..1)
+  let targetVolume = state.volume
+  if (extraOptions.volume != null && extraOptions.volume !== undefined) {
+    const rawVol = Number(extraOptions.volume)
+    if (!isNaN(rawVol)) {
+      targetVolume = rawVol > 1 ? rawVol / 100 : rawVol
+      if (targetVolume <= 0) {
+        targetVolume = config.defaultUIVolume / 100
+      }
+    }
+  }
+
+  // 3. State / Status:
+  const targetState = extraOptions.state || 'playing'
+
+  // 4. PlayMode:
+  const targetMode = extraOptions.playMode || state.mode
+
+  // 5. Bilingual:
+  const targetBilingual =
+    extraOptions.bilingualActive != null
+      ? Boolean(extraOptions.bilingualActive)
+      : false
+
+  return {
+    ...state,
+    queue: [item],
+    playIndex: 0,
+    clear: true,
+    bilingualActive: targetBilingual,
+    originalLyrics,
+    pendingSeekTime: positionSec || 0,
+    pendingState: targetState,
+    outputDevice: targetOutputDevice,
+    volume: targetVolume,
+    mode: targetMode,
+  }
+}
+
+const reduceClearPendingSeek = (state) => ({
+  ...state,
+  pendingSeekTime: null,
+  pendingState: null,
+})
 
 const reduceAddTracks = (state, { data }) => {
   const queue = [...state.queue]
@@ -345,6 +409,15 @@ export const playerReducer = (previousState = initialState, payload) => {
       return reduceOutputDevice(previousState, payload)
     case PLAYER_UPDATE_SONG_LYRIC:
       return reduceUpdateSongLyric(previousState, payload)
+    case PLAYER_TAKEOVER_TRACK:
+      return reduceTakeoverTrack(previousState, payload)
+    case PLAYER_CLEAR_PENDING_SEEK:
+      return reduceClearPendingSeek(previousState)
+    case EVENT_PLAYBACK_HANDOFF:
+      return {
+        ...previousState,
+        lastHandoff: { ...payload.data, _receivedAt: Date.now() },
+      }
     case PLAYER_REFRESH_QUEUE: {
       const resolvedUrls = payload.data || {}
       return {

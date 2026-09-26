@@ -57,3 +57,25 @@ export const discoverRenderers = (timeout = 6) =>
 
 export const status = () =>
   httpClient('/api/jukebox/status').then((response) => response.json)
+
+export const initXiaomiQR = () =>
+  httpClient('/api/jukebox/outputs/xiaomi/qr/init').then(
+    (response) => response.json,
+  )
+
+export const pollXiaomiQR = (lp) =>
+  postJSON('/api/jukebox/outputs/xiaomi/qr/poll', { lp }).then(
+    (response) => response.json,
+  )
+
+export const loginXiaomiPassword = (account, password) =>
+  postJSON('/api/jukebox/outputs/xiaomi/login/password', {
+    account,
+    password,
+  }).then((response) => response.json)
+
+export const loginXiaomiPassToken = (userId, passToken) =>
+  postJSON('/api/jukebox/outputs/xiaomi/login/passtoken', {
+    userId,
+    passToken,
+  }).then((response) => response.json)
