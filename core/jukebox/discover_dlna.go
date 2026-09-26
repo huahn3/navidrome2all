@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -116,7 +117,8 @@ func collectRenderers(ctx context.Context, conn packetReader, describe func(stri
 			if ctx.Err() != nil {
 				break // timeout / client disconnect: return what we have
 			}
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				break
 			}
 			log.Debug("DLNA discovery read error", err)

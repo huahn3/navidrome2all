@@ -42,3 +42,57 @@ code {
 .rc-slider {
   z-index: 78;
 }
+
+/*
+ * 手机端横向溢出修复（详见 docs/risk-notes-optimization.md §11）
+ *
+ * 背景：Navidrome 的 Layout 是 `min-width: fit-content`，任何"内在宽度"过大的后代
+ * 都会把整页撑宽，于是窄屏上右侧的按钮与文字被裁掉（看起来像"被隐藏"）。
+ * 给输入控件加 `min-width: 0` 没用——它只影响收缩下限，不影响内在宽度贡献。
+ * 真正有效的是 `width: 0 + min-width: 100%`：内在宽度归零，父级有确定宽度后再撑满，
+ * 长文案用省略号截断。
+ *
+ * 必须放在全局样式表里：JSS(makeStyles) 的 `& .MuiXxx` 嵌套选择器在本项目构建下
+ * 不会生成对应规则，实测只对 `&:hover` 这类伪类生效。
+ *
+ * 用法：给自己的表单容器加 className="responsive-fields"。
+ * 注意：宽度由内容决定的场景（如工具条里"下拉 + 按钮"并排）不要加，否则下拉会抢满整行。
+ */
+/*
+ * 这里刻意**不**用 `width: 0 + min-width: 100%`：那样虽然能压掉内在宽度，
+ * 但 select 的 min-width 百分比要靠父级宽度解析，而父级（InputBase）本身是
+ * flex 容器、宽度又由内容决定，于是循环依赖把下拉框压窄甚至只剩 "Goo"。
+ *
+ * 真正管用的是两件事：
+ *   1. 字段组用 grid + `minmax(0, 1fr)`，手机单列 / 桌面双列，控件拿到完整宽度；
+ *   2. 选项文案本身要短（长文案才是内在宽度的源头）。
+ * 本规则只负责最后的兜底：万一还有超长值，截断成省略号而不是撑宽整页。
+ */
+.responsive-fields .MuiSelect-select {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.responsive-fields .MuiInputBase-input {
+  min-width: 0;
+}
+
+.responsive-fields .MuiFormControl-root {
+  min-width: 0;
+}
+
+/*
+ * 表格在窄屏自己横向滚动，而不是把整页撑宽。
+ *
+ * 注意：`overflow-x: auto` 单独并不够——表格容器是普通块（非 flex/grid 项），
+ * 它的 min-content 仍然等于表格宽度（实测 5 列表格 min-content 524px），
+ * 于是照样把 fit-content 的 Layout 撑宽。必须再加 `contain: inline-size`：
+ * 这条规则的语义就是"计算我自己的尺寸时忽略内容的行内尺寸"。
+ */
+.responsive-fields .MuiTableContainer-root {
+  overflow-x: auto;
+  contain: inline-size;
+}

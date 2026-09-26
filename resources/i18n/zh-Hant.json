@@ -435,7 +435,9 @@
         "account": "小米帳號",
         "passToken": "passToken 憑證",
         "textDirective": "文字指令",
-        "source": "來源"
+        "source": "來源",
+        "accountPassword": "小米雲端帳號密碼",
+        "mpdPassword": "MPD 密碼"
       },
       "types": {
         "xiaomi": "小米 / 小愛音箱",
@@ -454,18 +456,95 @@
         "textDirective": "可選的播放指令覆寫，例如 5-5。",
         "pathFrom": "MPD 收到的路徑是相對音樂庫根目錄的（如 songs/track.mp3），一般留空。僅當 MPD 曲庫裡的目錄名與它不一致時填寫要替換的那一段。",
         "pathTo": "替換後的路徑前綴。",
-        "scan": "在區域網路發送 SSDP 搜尋並在下方列出回應的音箱，點選即可填入位址。"
+        "scan": "在區域網路發送 SSDP 搜尋並在下方列出回應的音箱，點選即可填入位址。",
+        "maskedSecret": "已儲存 —— 留空則保持原值不變",
+        "pathHint": "僅在 MPD 曲庫目錄與本服務 MusicFolder 不一致時使用：把歌曲路徑中的一段替換成另一段。",
+        "mpdPassword": "留空表示 MPD 允許匿名存取。若 mpd.conf 裡設了密碼，請把整個 password 行原樣填進來，例如 password \"abc123@read,add,control,admin\"。",
+        "mpdSetup": "多數 NAS 的 MPD 就在同一台機器上、預設連接埠 6600，先掃描一下最快。手動填時位址寫 host:port，例如 192.168.1.10:6600。",
+        "idHint": "留空會依名稱自動產生；僅用於設定檔與 API 呼叫。",
+        "advancedHint": "一般不用填。只有掃碼失敗、或需要手動指定權杖/路徑對應時才用得上。",
+        "xiaomiAddress": "喇叭的區域網路 IP，掃碼登入後會自動填好。",
+        "mpdAddress": "掃描最省事：多數 NAS 的 MPD 就在本機網段的 6600 連接埠。也可以手填 host:port。",
+        "dlnaAddress": "掃描後點選結果即可；要填裝置描述文件 URL，不是 /AVTransport/control。",
+        "dlnaNoExtra": "DLNA 不需要額外設定，儲存即可使用。",
+        "idAuto": "將自動產生為：%{id}（可自行修改）"
       },
       "sourceValues": {
         "config": "設定檔",
         "ui": "本頁面"
       },
       "actions": {
-        "scan": "掃描區域網路"
+        "scan": "掃描區域網路",
+        "use": "設為輸出",
+        "add": "新增輸出裝置",
+        "edit": "編輯",
+        "delete": "刪除",
+        "scanMpd": "掃描區域網路內的 MPD",
+        "verifyMpd": "測試連線",
+        "next": "下一步",
+        "prev": "上一步",
+        "changeType": "更換"
       },
       "messages": {
         "scanFailed": "掃描失敗，伺服器和音箱在同一個區域網路嗎？",
-        "scanEmpty": "沒有找到 DLNA 音箱，請確認音箱已開機且與伺服器在同一網路。"
+        "scanEmpty": "沒有找到 DLNA 音箱，請確認音箱已開機且與伺服器在同一網路。",
+        "saved": "輸出裝置已儲存",
+        "deleted": "輸出裝置已刪除",
+        "selected": "已切換到「{{name}}」播放",
+        "mpdOk": "連線成功，密碼正確。",
+        "batchSaved": "已新增 %{count} 台輸出裝置%{failed}"
+      },
+      "localOutput": "本機瀏覽器",
+      "localOutputHint": "在這台裝置上直接播放",
+      "currentBadge": "使用中",
+      "empty": "還沒有設定任何輸出裝置。",
+      "createTitle": "新增輸出裝置",
+      "editTitle": "編輯輸出裝置",
+      "deleteTitle": "刪除輸出裝置",
+      "deleteConfirm": "確定要刪除「{{name}}」嗎？此操作無法復原。",
+      "scanFound": "台裝置",
+      "sections": {
+        "current": "目前輸出",
+        "currentHint": "「本機」＝這台裝置自己出聲；選其它裝置時，本機播放器會靜音並把進度交給它。",
+        "devices": "區域網路裝置",
+        "devicesHint": "每張卡片是一台可出聲的裝置：可以設為目前輸出、修改連線資訊或刪除。設定檔裡定義的裝置唯讀。",
+        "basic": "基本",
+        "connection": "連線",
+        "xiaomi": "小愛喇叭",
+        "mpd": "MPD",
+        "pathMap": "路徑對應（選填）",
+        "dlna": "連線"
+      },
+      "errors": {
+        "idRequired": "需要填寫 ID",
+        "idInvalid": "ID 只能包含字母、數字、底線與短橫線（1-64 個字元）",
+        "nameRequired": "需要填寫名稱",
+        "addressRequired": "需要填寫位址"
+      },
+      "hint": {
+        "mpdScanHint": "MPD 沒有廣播機制，掃描會依序探測本機各網段的 6600 連接埠（約 1-2 秒）。",
+        "needsPassword": "需要密碼",
+        "scanEmpty": "找不到裝置。可以手動填寫位址，或確認裝置與本服務在同一網段。",
+        "descriptionUrl": "裝置描述 URL（點編輯可看完整位址）"
+      },
+      "steps": {
+        "type": "1. 類型",
+        "connection": "2. 連線",
+        "advanced": "3. 進階"
+      },
+      "typeCards": {
+        "xiaomi": {
+          "title": "小愛喇叭",
+          "desc": "小米/小愛喇叭，掃碼即可自動填好位址與權杖。"
+        },
+        "mpd": {
+          "title": "MPD",
+          "desc": "NAS 或樹莓派上的 MPD 音樂服務，通常是 6600 連接埠。"
+        },
+        "dlna": {
+          "title": "DLNA / UPnP",
+          "desc": "區域網路裡任意 UPnP 裝置，例如智慧喇叭或電視。"
+        }
       }
     }
   },
@@ -658,7 +737,10 @@
     "coverRemoved": "已移除封面圖",
     "coverUploadError": "上傳封面圖時發生錯誤",
     "coverRemoveError": "移除封面圖時發生錯誤",
-    "metadataRefreshStarted": "正在背景重新整理中繼資料"
+    "metadataRefreshStarted": "正在背景重新整理中繼資料",
+    "quickConnectApproved": "{{app}} 已在 {{device}} 上登入",
+    "quickConnectError": "授權失敗",
+    "quickConnectInvalidCode": "授權碼無效或已過期"
   },
   "menu": {
     "library": "媒體庫",
@@ -691,7 +773,6 @@
       "enable": "啟用歌詞翻譯功能",
       "enableHint": "開啟後，播放器工具列將顯示「翻譯歌詞」按鈕，點擊即可即時取得雙語對照歌詞。",
       "engineSection": "翻譯引擎與語言",
-      "engine": "翻譯引擎",
       "targetLanguage": "翻譯目標語言",
       "model": "模型",
       "credentialsSection": "API 金鑰與網路參數",
@@ -712,7 +793,89 @@
       "saving": "正在儲存...",
       "saved": "歌詞翻譯設定已成功儲存！",
       "saveFailed": "儲存設定失敗，請檢查網路或權限",
-      "loadFailed": "載入設定失敗，請確認是否具備管理員權限"
+      "loadFailed": "載入設定失敗，請確認是否具備管理員權限",
+      "engine.gemini": "Google Gemini",
+      "engine.zhipu": "智譜 GLM",
+      "engine.baidu": "百度翻譯",
+      "engine.google": "Google 翻譯",
+      "engine.openai": "OpenAI 相容介面",
+      "note.gemini": "Key 來自 Google AI Studio (aistudio.google.com)。免費配額充足，支援最新的 gemini-flash-latest 與 gemini-flash-lite-latest 模型。若在國內伺服器部署且直連受阻，可填寫下方的 HTTP 代理或 Base URL。",
+      "note.zhipu": "Key 來自智譜開放平台 (open.bigmodel.cn)。預設使用 glm-4-flash 模型，呼叫速度極快且完全免費。",
+      "note.baidu": "需要百度翻譯開放平台 (fanyi.baidu.com/api) 的 App ID 與密鑰 (Secret Key)。",
+      "note.google": "使用 Google 免費公共翻譯介面，無需 API Key，但受限於公共請求頻率。",
+      "note.openai": "適用於所有相容 OpenAI 格式的服務（例如 DeepSeek、Moonshot、Groq、Ollama、OneAPI 等），需填寫 API Base URL 與 API Key。",
+      "lang.zhCN": "簡體中文",
+      "lang.zhTW": "繁體中文",
+      "lang.en": "英語 (en)",
+      "lang.ja": "日語 (ja)",
+      "lang.ko": "韓語 (ko)",
+      "lang.fr": "法語 (fr)",
+      "lang.de": "德語 (de)",
+      "lang.es": "西班牙語 (es)",
+      "lang.currentValue": "%{code}（目前設定值）",
+      "hint.geminiModel": "flash 效果最好（推薦）；flash-lite 回應更快、更省額度",
+      "hint.zhipuModel": "預設使用 glm-4-flash (完全免費呼叫)",
+      "hint.openaiModel": "例如 gpt-4o-mini、deepseek-chat、qwen-plus 等",
+      "label.baseUrlCustom": "自訂 Base URL (反向代理，可選)",
+      "label.baseUrlExample": "API Base URL (例如 https://api.deepseek.com/v1)",
+      "hint.baseUrlGemini": "直連受阻或使用了 Gemini 反向代理時填寫，留空預設官方位址。",
+      "hint.baseUrlOpenai": "OpenAI 相容介面必填服務商提供的 Base URL。",
+      "note.test": "測試會直接呼叫上方設定的引擎與密鑰驗證連線",
+      "label.cachedCount": "已快取: %{count} 首",
+      "tip.refreshCache": "重新整理快取列表",
+      "action.stopTask": "終止工作",
+      "label.batchProgress": "目前進度: %{processed} / %{total} (%{percent}%)",
+      "label.batchCurrent": " — 處理中: %{name}",
+      "label.batchSucceeded": "成功: %{count}",
+      "label.batchFailed": "失敗: %{count}",
+      "ph.songId": "輸入歌曲 ID 重新翻譯單首歌曲...",
+      "action.retranslateSong": "重新翻譯此歌曲",
+      "label.cachedList": "已快取歌曲列表 (%{count})",
+      "ph.search": "搜尋歌名、歌手或模型...",
+      "empty.noCached": "尚無已快取的翻譯歌曲。在播放器中點擊「翻譯歌詞」後，結果會自動快取於此。",
+      "th.song": "歌曲",
+      "th.language": "語言",
+      "th.model": "翻譯模型",
+      "th.updated": "更新時間",
+      "th.actions": "操作",
+      "tip.retranslateModel": "使用目前選定模型重新翻譯此歌曲",
+      "tip.deleteCache": "刪除該歌曲翻譯快取",
+      "confirm.retranslateAllTitle": "警告：確認重新翻譯所有歌曲？",
+      "confirm.retranslateAllModel": "目前生效模型：%{engine} (%{model})",
+      "confirm.retranslateAllBody": "您即將對已快取的全部 <strong>%{count}</strong> 首歌曲發起重新翻譯。",
+      "confirm.retranslateAllNotes": "注意事項",
+      "confirm.retranslateAllNote1": "此操作將覆蓋本地現有的全部翻譯快取；",
+      "confirm.retranslateAllNote2": "系統將在背景逐一呼叫外部 AI 介面重新翻譯，根據歌曲數量可能消耗較多 API 配額並需要數分鐘；",
+      "confirm.retranslateAllNote3": "重新翻譯過程中您隨時可以在本頁面點擊終止工作。",
+      "confirm.retranslateAllAction": "確定要立即重新翻譯所有歌曲嗎？",
+      "confirm.clearCacheTitle": "確認清空全部翻譯快取？",
+      "confirm.clearCacheBody": "清空後，本地磁碟上已儲存的全部 <strong>%{count}</strong> 首歌曲翻譯檔案將被永久刪除。",
+      "confirm.clearCacheBody2": "使用者之後在播放器中點擊翻譯時，將自動使用目前設定的新模型重新產生雙語歌詞。",
+      "confirm.clearCacheAction": "確認清空全部快取",
+      "action.cancel": "取消",
+      "error.unknown": "未知錯誤",
+      "error.requestFailed": "請求失敗，請檢查網路或服務設定",
+      "confirm.defaultModel": "預設",
+      "confirm.retranslateAllConfirm": "確認重新翻譯全部歌曲",
+      "engine": "翻譯引擎",
+      "cacheManagementTitle": "已翻譯歌曲管理與重新翻譯",
+      "cacheManagementDesc": "已翻譯的歌詞預設永久快取於本地磁碟。當您切換了不同的 AI 翻譯引擎或高精度模型後，可在此重新翻譯單首歌曲或批次重新翻譯所有歌曲。",
+      "retranslateAllBtn": "重新翻譯所有歌曲",
+      "retranslateAllTitle": "警告：確認重新翻譯所有歌曲？",
+      "clearAllCacheBtn": "清空全部快取",
+      "retranslateSuccess": "歌曲重新翻譯成功並已更新快取！",
+      "retranslateFailed": "重新翻譯失敗: %{reason}",
+      "retranslatingSingle": "正在使用目前選定的模型重新翻譯該歌曲...",
+      "deleteCacheSuccess": "已刪除該歌曲的翻譯快取",
+      "deleteCacheFailed": "刪除失敗: %{reason}",
+      "clearedAll": "已成功清空全部翻譯快取（共清除 %{count} 個檔案）！",
+      "clearFailed": "清空失敗: %{reason}",
+      "batchRunningTitle": "正在批次重新翻譯所有已快取歌曲...",
+      "batchStarted": "已啟動背景批次重新翻譯工作，正在處理中...",
+      "batchStartFailed": "啟動失敗: %{reason}",
+      "batchFinished": "所有歌曲重新翻譯完成！成功 %{success} 首，失敗 %{failed} 首。",
+      "batchCanceled": "已請求終止批次重新翻譯工作",
+      "note.unknown": ""
     },
     "albumList": "專輯",
     "about": "關於",
@@ -724,7 +887,19 @@
       "selectLibraries": "選取媒體庫",
       "none": "無"
     },
-    "onlyFavourites": "僅顯示收藏"
+    "onlyFavourites": "僅顯示收藏",
+    "jukebox": {
+      "name": "輸出裝置",
+      "subtitle": "把播放交給區域網路裡的喇叭或 NAS。這裡選擇哪個輸出，播放器與「正在播放」裡的其他裝置都會跟著切過去。"
+    },
+    "quickConnect": {
+      "name": "快速連線",
+      "code": "授權碼",
+      "help": "輸入 Jellyfin 客戶端顯示的授權碼，即可登入你的帳號",
+      "confirm": "確認在「{{device}}」登入 {{app}} {{version}}？",
+      "continue": "繼續",
+      "approve": "核准"
+    }
   },
   "player": {
     "playListsText": "播放佇列",
@@ -759,7 +934,10 @@
     "translateEmpty": "未找到可翻譯的歌詞",
     "translateNotFound": "目前歌曲暫無歌詞可供翻譯",
     "translateForbidden": "歌詞翻譯功能未開啟，請在「歌詞翻譯」獨立設定中開啟",
-    "translateFailed": "歌詞翻譯失敗，請檢查網路或API設定"
+    "translateFailed": "歌詞翻譯失敗，請檢查網路或API設定",
+    "retranslating": "正在重新翻譯...",
+    "retranslateSuccess": "已重新翻譯",
+    "retranslateFailed": "重新翻譯失敗"
   },
   "about": {
     "links": {

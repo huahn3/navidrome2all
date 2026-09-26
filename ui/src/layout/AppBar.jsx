@@ -22,6 +22,7 @@ import LyricsTranslationMenu from './LyricsTranslationMenu'
 import ActivityPanel from './ActivityPanel'
 import NowPlayingPanel from './NowPlayingPanel'
 import UserMenu from './UserMenu'
+import JukeboxOutputsMenu from './JukeboxOutputsMenu'
 import config from '../config'
 
 const useStyles = makeStyles(
@@ -133,6 +134,9 @@ const CustomUserMenu = ({ onClick, ...rest }) => {
       {config.devActivityPanel && permissions === 'admin' && <ActivityPanel />}
       <UserMenu {...rest}>
         <PersonalMenu sidebarIsOpen={true} onClick={onClick} />
+        {permissions === 'admin' && config.jukeboxEnabled && (
+          <JukeboxOutputsMenu sidebarIsOpen={true} onClick={onClick} />
+        )}
         {permissions === 'admin' && (
           <LyricsTranslationMenu sidebarIsOpen={true} onClick={onClick} />
         )}

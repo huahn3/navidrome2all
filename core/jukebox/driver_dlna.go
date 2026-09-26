@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/navidrome/navidrome/conf"
@@ -34,6 +35,12 @@ type dlnaDriver struct {
 	rcURL    string
 	resolved bool
 	volume   int // last known/reported volume
+
+	// gen invalidates an in-flight seek verification. Play, Stop and Seek bump
+	// it, and a background verifier stops as soon as the generation no longer
+	// matches the one it captured — without it, a verification that outlived a
+	// track change would drag the renderer back to the old position.
+	gen atomic.Uint64
 }
 
 func newDLNADriver(dev conf.JukeboxOutputDevice) *dlnaDriver {
@@ -282,6 +289,7 @@ func (d *dlnaDriver) Play(mediaPath, streamURL string) error {
 	if err != nil {
 		return err
 	}
+	d.gen.Add(1) // any pending seek verification targets the previous track
 	metaData := didlMetadata(mediaPath, streamURL)
 	if _, err := d.soapCall(avURL, avTransportService, "SetAVTransportURI", [][2]string{
 		{"InstanceID", "0"},
@@ -331,6 +339,7 @@ func (d *dlnaDriver) Stop() error {
 	if err != nil {
 		return err
 	}
+	d.gen.Add(1) // any pending seek verification is moot once stopped
 	_, err = d.soapCall(avURL, avTransportService, "Stop", [][2]string{{"InstanceID", "0"}})
 	return err
 }
@@ -356,45 +365,74 @@ const (
 	dlnaSeekTolerance = 5 // seconds the reported position may lag behind the target
 )
 
+// Seek moves the renderer to seconds.
+//
+// The UPnP Seek itself is sent synchronously; the "did the renderer really move?"
+// verification runs in the background. The device manager serializes every driver
+// call behind one lock, and a renderer that ignores Seek can take seconds to
+// confirm — blocking here would stall every other jukebox command, including the
+// pause that the playback takeover endpoint issues. The UI is optimistic about
+// the seek anyway and reconciles from /api/jukebox/status.
 func (d *dlnaDriver) Seek(seconds int) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	avURL, _, err := d.endpoints()
+	if err != nil {
+		d.mu.Unlock()
+		return err
+	}
+	gen := d.gen.Add(1)
+	_, err = d.seekTo(avURL, seconds)
+	d.mu.Unlock()
 	if err != nil {
 		return err
 	}
+	go d.verifySeek(avURL, seconds, gen)
+	return nil
+}
 
-	if !d.waitPositionAdvancing(avURL) {
+// verifySeek re-applies a seek the renderer swallowed, giving up once the
+// transport moved on or the renderer has had all attempts. It never holds d.mu
+// while sleeping, so volume/pause keep flowing during the retries.
+func (d *dlnaDriver) verifySeek(avURL string, seconds int, gen uint64) {
+	if !d.waitPositionAdvancing(avURL, gen) {
 		// The device never reports a moving position, so there is nothing to
-		// verify against: send the seek and hope it landed.
-		_, err = d.seekTo(avURL, seconds)
-		return err
+		// verify against: the seek already sent is all we can do.
+		return
 	}
-
-	for attempt := 1; attempt <= dlnaSeekAttempts; attempt++ {
-		if _, err := d.seekTo(avURL, seconds); err != nil {
-			return err
+	time.Sleep(dlnaSeekConfirmDelay)
+	for attempt := 2; attempt <= dlnaSeekAttempts; attempt++ {
+		if d.gen.Load() != gen {
+			return
 		}
-		time.Sleep(dlnaSeekConfirmDelay)
 		if d.positionReached(avURL, seconds) {
-			return nil
+			return
+		}
+		d.mu.Lock()
+		_, err := d.seekTo(avURL, seconds)
+		d.mu.Unlock()
+		if err != nil {
+			log.Debug("DLNA renderer rejected the repeated seek", "address", d.address, "target", seconds, "err", err)
+			return
 		}
 		log.Debug("DLNA renderer ignored the seek", "address", d.address, "target", seconds, "attempt", attempt)
+		time.Sleep(dlnaSeekConfirmDelay)
+	}
+	if d.positionReached(avURL, seconds) {
+		return
 	}
 	log.Warn("DLNA renderer ignored the seek request, continuing from its own position",
 		"address", d.address, "target", seconds)
-	return nil
 }
 
 // waitPositionAdvancing polls the reported position until it moves, reporting
 // whether the device can be trusted to tell where it is.
-func (d *dlnaDriver) waitPositionAdvancing(avURL string) bool {
+func (d *dlnaDriver) waitPositionAdvancing(avURL string, gen uint64) bool {
 	deadline := time.Now().Add(dlnaSeekStartTimeout)
 	for {
 		if pos, ok := d.position(avURL); ok && pos > 0 {
 			return true
 		}
-		if time.Now().After(deadline) {
+		if d.gen.Load() != gen || time.Now().After(deadline) {
 			return false
 		}
 		time.Sleep(dlnaSeekPollInterval)

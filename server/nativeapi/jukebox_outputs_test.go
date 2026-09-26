@@ -212,6 +212,40 @@ var _ = Describe("Jukebox Outputs Endpoints", func() {
 			})
 		})
 
+		Describe("secret masking", func() {
+			It("never returns stored credentials in GET", func() {
+				dev := conf.JukeboxOutputDevice{
+					ID: "spk", Name: "Speaker", Type: "mpd", Address: "127.0.0.1:6600",
+					Password: "s3cr3t", Token: "deadbeef", PassToken: "V1:tok",
+				}
+				Expect(jukebox.SaveStoredOutputs(context.Background(), ds, []conf.JukeboxOutputDevice{dev})).To(Succeed())
+
+				w := do("GET", "/jukebox/outputs", nil, admin)
+				Expect(w.Code).To(Equal(http.StatusOK))
+				Expect(w.Body.String()).ToNot(ContainSubstring("s3cr3t"))
+				Expect(w.Body.String()).ToNot(ContainSubstring("deadbeef"))
+				Expect(w.Body.String()).ToNot(ContainSubstring("V1:tok"))
+				Expect(w.Header().Get("Cache-Control")).To(Equal("no-store"))
+			})
+
+			It("keeps the stored secret when the UI sends the mask back", func() {
+				prev := conf.JukeboxOutputDevice{
+					ID: "spk2", Name: "S", Type: "mpd", Address: "127.0.0.1:6600", Password: "s3cr3t",
+				}
+				dto := jukeboxOutputDTO{ID: "spk2", Name: "S", Type: "mpd", Address: "127.0.0.1:6600", Password: secretMask}
+				got := outputFromDTO(dto, prev)
+				Expect(got.Password).To(Equal("s3cr3t"))
+
+				// An explicitly empty field keeps it too (the form clears the mask).
+				dto.Password = ""
+				Expect(outputFromDTO(dto, prev).Password).To(Equal("s3cr3t"))
+
+				// A real new value does replace it.
+				dto.Password = "brand-new"
+				Expect(outputFromDTO(dto, prev).Password).To(Equal("brand-new"))
+			})
+		})
+
 		Describe("Xiaomi auth endpoints", func() {
 			It("requires admin for all xiaomi endpoints", func() {
 				user := model.User{ID: "u2", UserName: "joe"}

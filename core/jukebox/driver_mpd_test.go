@@ -19,6 +19,9 @@ type fakeMPD struct {
 	mu       sync.Mutex
 	commands []string
 	status   map[string]string
+	// password, when set, makes the server reject any other password. Empty
+	// keeps the permissive behaviour the driver tests rely on.
+	password string
 }
 
 func newFakeMPD() *fakeMPD {
@@ -103,6 +106,14 @@ func (f *fakeMPD) process(line string) (response string, closeConn bool) {
 		return "OK\n", false
 	}
 	switch fields[0] {
+	case "password":
+		got := ""
+		if len(fields) > 1 {
+			got = strings.Trim(fields[1], `"`)
+		}
+		if f.password != "" && got != f.password {
+			return "ACK [3@0] {password} incorrect password\n", false
+		}
 	case "status":
 		keys := make([]string, 0, len(f.status))
 		for k := range f.status {

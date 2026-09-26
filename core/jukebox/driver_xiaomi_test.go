@@ -237,7 +237,7 @@ func newFakeXiaomiCloud() *fakeXiaomiCloud {
 	f := &fakeXiaomiCloud{ssecurity: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef"))}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/pass/serviceLogin", func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{Name: "deviceId", Value: "dev-1"})
+		http.SetCookie(w, &http.Cookie{Name: "deviceId", Value: "dev-1"}) //nolint:gosec // stub passport server
 		_, _ = w.Write([]byte(`&&&START&&&{"_sign":"sign123"}`))
 	})
 	mux.HandleFunc("/pass/serviceLoginAuth2", func(w http.ResponseWriter, r *http.Request) {
@@ -251,7 +251,7 @@ func newFakeXiaomiCloud() *fakeXiaomiCloud {
 			f.ssecurity, location)
 	})
 	mux.HandleFunc("/sts", func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{Name: "serviceToken", Value: "token-abc"})
+		http.SetCookie(w, &http.Cookie{Name: "serviceToken", Value: "token-abc"}) //nolint:gosec // stub passport server
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/app/miotspec/action", f.handleAction)
@@ -317,7 +317,7 @@ func (f *fakeXiaomiCloud) handleAction(w http.ResponseWriter, r *http.Request) {
 
 		respPayload := []byte(`{"code":0,"result":{"code":0}}`)
 		encResp, _ := rc4Crypt(signedNonce, respPayload)
-		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString(encResp)))
+		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString(encResp))) //nolint:gosec // test fixture returns its own base64 payload
 		return
 	}
 

@@ -1,6 +1,7 @@
 package nativeapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -46,6 +47,47 @@ type SessionsListResponse struct {
 	Count    int                       `json:"count"`
 }
 
+// sessionResponse converts a tracker session into the API shape. Every endpoint
+// must go through it: the fields are easy to forget when a new one is added, and
+// a partially populated response is worse than none.
+func sessionResponse(s *scrobbler.PlaybackSession, currentClientID string) PlaybackSessionResponse {
+	return PlaybackSessionResponse{
+		SessionID:        s.PlayerId,
+		UserID:           s.UserId,
+		Username:         s.Username,
+		PlayerName:       s.PlayerName,
+		SongID:           s.MediaFile.ID,
+		Title:            s.MediaFile.Title,
+		Artist:           s.MediaFile.Artist,
+		ArtistID:         s.MediaFile.AlbumArtistID,
+		Album:            s.MediaFile.Album,
+		AlbumID:          s.MediaFile.AlbumID,
+		Duration:         int(s.MediaFile.Duration),
+		PositionMs:       s.PositionMs,
+		PositionSec:      float64(s.PositionMs) / 1000.0,
+		State:            s.State,
+		PlaybackRate:     s.PlaybackRate,
+		CoverArtID:       s.MediaFile.ID,
+		LastReport:       s.LastReport.Format(time.RFC3339),
+		IsCurrentSession: currentClientID != "" && s.PlayerId == currentClientID,
+		OutputDevice:     s.OutputDevice,
+		Volume:           s.Volume,
+		PlayMode:         s.PlayMode,
+		Bilingual:        s.Bilingual,
+	}
+}
+
+// currentClientID reports which session belongs to the caller: the explicit
+// X-ND-Client-Unique-Id when present, else the player id derived from the
+// request. Used only to flag isCurrentSession.
+func currentClientID(ctx context.Context) string {
+	player, _ := request.PlayerFrom(ctx)
+	if cid, ok := request.ClientUniqueIdFrom(ctx); ok && cid != "" {
+		return cid
+	}
+	return player.ID
+}
+
 type TakeoverRequest struct {
 	Action          string `json:"action"` // "pause" | "stop", defaults to "pause"
 	SourceSessionID string `json:"sourceSessionId,omitempty"`
@@ -86,46 +128,15 @@ func (api *Router) getPlaybackSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	player, _ := request.PlayerFrom(ctx)
-	var currentClientID string
-	if player.ID != "" {
-		currentClientID = player.ID
-	}
-	if cid, ok := request.ClientUniqueIdFrom(ctx); ok {
-		currentClientID = cid
-	}
+	myID := currentClientID(ctx)
 
 	resp := SessionsListResponse{
 		Sessions: make([]PlaybackSessionResponse, 0, len(sessions)),
 		Count:    len(sessions),
 	}
 
-	for _, s := range sessions {
-		item := PlaybackSessionResponse{
-			SessionID:        s.PlayerId,
-			UserID:           s.UserId,
-			Username:         s.Username,
-			PlayerName:       s.PlayerName,
-			SongID:           s.MediaFile.ID,
-			Title:            s.MediaFile.Title,
-			Artist:           s.MediaFile.Artist,
-			ArtistID:         s.MediaFile.AlbumArtistID,
-			Album:            s.MediaFile.Album,
-			AlbumID:          s.MediaFile.AlbumID,
-			Duration:         int(s.MediaFile.Duration),
-			PositionMs:       s.PositionMs,
-			PositionSec:      float64(s.PositionMs) / 1000.0,
-			State:            s.State,
-			PlaybackRate:     s.PlaybackRate,
-			CoverArtID:       s.MediaFile.ID,
-			LastReport:       s.LastReport.Format(time.RFC3339),
-			IsCurrentSession: currentClientID != "" && s.PlayerId == currentClientID,
-			OutputDevice:     s.OutputDevice,
-			Volume:           s.Volume,
-			PlayMode:         s.PlayMode,
-			Bilingual:        s.Bilingual,
-		}
-		resp.Sessions = append(resp.Sessions, item)
+	for i := range sessions {
+		resp.Sessions = append(resp.Sessions, sessionResponse(&sessions[i], myID))
 	}
 
 	_ = rest.RespondWithJSON(w, http.StatusOK, resp)
@@ -159,42 +170,10 @@ func (api *Router) getPlaybackSessionByID(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	player, _ := request.PlayerFrom(ctx)
-	var currentClientID string
-	if player.ID != "" {
-		currentClientID = player.ID
-	}
-	if cid, ok := request.ClientUniqueIdFrom(ctx); ok {
-		currentClientID = cid
-	}
-
-	for _, s := range sessions {
-		if s.PlayerId == sessionID {
-			item := PlaybackSessionResponse{
-				SessionID:        s.PlayerId,
-				UserID:           s.UserId,
-				Username:         s.Username,
-				PlayerName:       s.PlayerName,
-				SongID:           s.MediaFile.ID,
-				Title:            s.MediaFile.Title,
-				Artist:           s.MediaFile.Artist,
-				ArtistID:         s.MediaFile.AlbumArtistID,
-				Album:            s.MediaFile.Album,
-				AlbumID:          s.MediaFile.AlbumID,
-				Duration:         int(s.MediaFile.Duration),
-				PositionMs:       s.PositionMs,
-				PositionSec:      float64(s.PositionMs) / 1000.0,
-				State:            s.State,
-				PlaybackRate:     s.PlaybackRate,
-				CoverArtID:       s.MediaFile.ID,
-				LastReport:       s.LastReport.Format(time.RFC3339),
-				IsCurrentSession: currentClientID != "" && s.PlayerId == currentClientID,
-				OutputDevice:     s.OutputDevice,
-				Volume:           s.Volume,
-				PlayMode:         s.PlayMode,
-				Bilingual:        s.Bilingual,
-			}
-			_ = rest.RespondWithJSON(w, http.StatusOK, item)
+	myID := currentClientID(ctx)
+	for i := range sessions {
+		if sessions[i].PlayerId == sessionID {
+			_ = rest.RespondWithJSON(w, http.StatusOK, sessionResponse(&sessions[i], myID))
 			return
 		}
 	}
@@ -262,27 +241,14 @@ func (api *Router) takeoverPlaybackSession(w http.ResponseWriter, r *http.Reques
 	if targetSession != nil {
 		songID = targetSession.MediaFile.ID
 		posMs = targetSession.PositionMs
-		sessionResp = &PlaybackSessionResponse{
-			SessionID:    targetSession.PlayerId,
-			UserID:       targetSession.UserId,
-			Username:     targetSession.Username,
-			PlayerName:   targetSession.PlayerName,
-			SongID:       targetSession.MediaFile.ID,
-			Title:        targetSession.MediaFile.Title,
-			Artist:       targetSession.MediaFile.Artist,
-			Album:        targetSession.MediaFile.Album,
-			Duration:     int(targetSession.MediaFile.Duration),
-			PositionMs:   targetSession.PositionMs,
-			PositionSec:  float64(targetSession.PositionMs) / 1000.0,
-			State:        targetState,
-			PlaybackRate: targetSession.PlaybackRate,
-			CoverArtID:   targetSession.MediaFile.ID,
-			LastReport:   time.Now().Format(time.RFC3339),
-			OutputDevice: targetSession.OutputDevice,
-			Volume:       targetSession.Volume,
-			PlayMode:     targetSession.PlayMode,
-			Bilingual:    targetSession.Bilingual,
-		}
+		// Snapshot with the state the taker is imposing, then convert with the
+		// shared mapper so the response carries the same fields as the list
+		// endpoint (artistId/albumId/isCurrentSession used to be missing here).
+		snapshot := *targetSession
+		snapshot.State = targetState
+		snapshot.LastReport = time.Now()
+		resp := sessionResponse(&snapshot, "")
+		sessionResp = &resp
 
 		// Report state to tracker to cleanly stop or pause the remote session
 		_ = tracker.ReportPlayback(ctx, scrobbler.ReportPlaybackParams{

@@ -161,4 +161,52 @@ describe('<LyricsTranslation />', () => {
       )
     })
   })
+  it('renders every engine and language option with a usable value', async () => {
+    render(<LyricsTranslation />)
+
+    await waitFor(() => {
+      expect(screen.getByText('歌词双语翻译')).toBeInTheDocument()
+    })
+
+    // 配置里的 engine/targetLanguage 必须真的落在某个选项上：
+    // 曾经把字符串数组当对象用（o.id 全是 undefined），下拉框会渲染成空白且选项全废。
+    const selects = document.querySelectorAll('.MuiSelect-select')
+    expect(selects[0].textContent.trim()).toBe('gemini')
+    // mock 的 translate 直接返回 `_` 默认值（不做插值），语言标签回退成语言码本身
+    expect(selects[1].textContent.trim()).toBe('zh-CN')
+
+    fireEvent.mouseDown(selects[0])
+    await waitFor(() => {
+      const opts = [...document.querySelectorAll('li[role="option"]')].map(
+        (e) => e.textContent.trim(),
+      )
+      expect(opts).toEqual(['gemini', 'zhipu', 'baidu', 'google', 'openai'])
+    })
+  })
+
+  it('adds the current language code to the list when it is not a known option', async () => {
+    httpClient.mockImplementation((url) => {
+      if (url === '/api/lyrics/translation/config') {
+        return Promise.resolve({
+          json: {
+            enabled: true,
+            engine: 'gemini',
+            model: 'gemini-flash-latest',
+            apiKey: '',
+            targetLanguage: 'zh-Hans',
+          },
+        })
+      }
+      return Promise.resolve({ json: { songs: [], cleared: 0 } })
+    })
+
+    render(<LyricsTranslation />)
+    await waitFor(() => {
+      expect(screen.getByText('歌词双语翻译')).toBeInTheDocument()
+    })
+
+    // 未知语言码以前会让下拉框渲染成一片空白，看不出当前设置
+    const selects = document.querySelectorAll('.MuiSelect-select')
+    expect(selects[1].textContent.trim()).toBe('%{code} (current value)')
+  })
 })

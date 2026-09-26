@@ -11,28 +11,73 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 )
 
+// 凭据一律从环境变量读取，仓库里不再保存任何真实口令/JWT。
+// 用法见同目录 .env.example（复制为 .env 后 `set -a; . ./.env; set +a` 再运行）。
+// 需要的变量：XIAOMI_ACCOUNT、XIAOMI_PASS_TOKEN、NAVIDROME_BASE、NAVIDROME_USER、
+// NAVIDROME_PASSWORD、NAVIDROME_JWT。
 const (
-	defaultPort     = "14535"
-	navidromeBase   = "http://192.168.31.246:14534"
-	account         = "1250258297"
-	passToken       = "V1:pwROAesIuzMBPe5slLSsQjMbCcEHs4ijsTN9Sls1SVbuDFS0Af2pg4yX7L3BVBlyG36Elh6jQOWd5kHCmrda31BO9pCQ+9TLucZK06YQncM6ZEIv5/XLxhV3uwiWSXWzlUNsqFen+t7UB9B1w/nJbDtCehzKIY62I9zV4Hl/nuSnqrhsDQAZxZ1pex33gc5i7va27a6ypLGqClwQi96WMnAHpSG8eJF5nXwe2Yca9ZwcgWVsS3FvUf9r8QEv1qiVIwtPgDldtlKvuM26yIPOqOj585egyHEhfhP9G524K8BQzXAHJcwxLSieMkjdZvb7j4AzBPMqGAw46Mtn23O9hw=="
-	navidromeJWT    = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZG0iOnRydWUsImV4cCI6MTc5MDU5MjI0OCwiaWF0IjoxNzkwNDE5MTk0LCJpc3MiOiJORCIsInN1YiI6IjEyMyIsInVpZCI6IjFQU09ZY3pwS01QWkJWRnFwZ2JxTFoifQ.6zFCe1K1H5EejOlI1UnakSy5K78Cp2XSYRlQdrktX8I"
-	navidromeUser   = "123"
-	navidromePass   = "123123"
+	defaultPort = "14535"
 )
 
+type secrets struct {
+	xiaomiAccount   string
+	xiaomiPassToken string
+	navidromeBase   string
+	navidromeUser   string
+	navidromePass   string
+	navidromeJWT    string
+}
+
+var cfg secrets
+
+func loadSecrets() error {
+	env := func(key, fallback string) string {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+		return fallback
+	}
+	required := func(key string) (string, error) {
+		v := strings.TrimSpace(os.Getenv(key))
+		if v == "" {
+			return "", fmt.Errorf("缺少环境变量 %s（见 scripts/.env.example）", key)
+		}
+		return v, nil
+	}
+
+	var err error
+	if cfg.xiaomiAccount, err = required("XIAOMI_ACCOUNT"); err != nil {
+		return err
+	}
+	if cfg.xiaomiPassToken, err = required("XIAOMI_PASS_TOKEN"); err != nil {
+		return err
+	}
+	if cfg.navidromeUser, err = required("NAVIDROME_USER"); err != nil {
+		return err
+	}
+	if cfg.navidromePass, err = required("NAVIDROME_PASSWORD"); err != nil {
+		return err
+	}
+	if cfg.navidromeJWT, err = required("NAVIDROME_JWT"); err != nil {
+		return err
+	}
+	cfg.navidromeBase = strings.TrimRight(env("NAVIDROME_BASE", "http://127.0.0.1:4533"), "/")
+	return nil
+}
+
 type Device struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Hardware      string `json:"hardware"`
-	IP            string `json:"ip"`
-	MiotDID       string `json:"miotDid"`
-	MinaDeviceID  string `json:"minaDeviceId"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Hardware     string `json:"hardware"`
+	IP           string `json:"ip"`
+	MiotDID      string `json:"miotDid"`
+	MinaDeviceID string `json:"minaDeviceId"`
 }
 
 var devices = []Device{
@@ -72,10 +117,10 @@ func getServiceToken() (string, error) {
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, _ := http.NewRequest("GET", "https://account.xiaomi.com/pass/serviceLogin?sid=micoapi&_json=true", nil)
-	req.AddCookie(&http.Cookie{Name: "userId", Value: account})
-	req.AddCookie(&http.Cookie{Name: "passToken", Value: passToken})
-	req.AddCookie(&http.Cookie{Name: "deviceId", Value: "D84D9205859533D5"})
-	req.AddCookie(&http.Cookie{Name: "sdkVersion", Value: "3.9"})
+	req.AddCookie(&http.Cookie{Name: "userId", Value: cfg.xiaomiAccount})      //nolint:gosec // outbound API cookie
+	req.AddCookie(&http.Cookie{Name: "passToken", Value: cfg.xiaomiPassToken}) //nolint:gosec // outbound API cookie
+	req.AddCookie(&http.Cookie{Name: "deviceId", Value: "D84D9205859533D5"})   //nolint:gosec // outbound API cookie
+	req.AddCookie(&http.Cookie{Name: "sdkVersion", Value: "3.9"})              //nolint:gosec // outbound API cookie
 	req.Header.Set("User-Agent", "APP/com.xiaomi.mihome APPV/11.3.203 iosPassportSDK/4.2.50 iOS/26.3.1 MK/aVBob25lMTcsMg== DEVT/aVBob25l DEVS/aU9T BRA/QXBwbGU= L/zh_CN")
 
 	resp, err := client.Do(req)
@@ -148,8 +193,8 @@ func callMinaUbus(minaDeviceID, method, path string, msgObj any) (string, error)
 	req, _ := http.NewRequest("POST", "https://api2.mina.mi.com/remote/ubus", strings.NewReader(formData.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "MiHome/6.0.103 (com.xiaomi.mihome; build:6.0.103.1; iOS 14.4.0) Alamofire/6.0.103 MICO/iOSApp/appStore/6.0.103")
-	req.AddCookie(&http.Cookie{Name: "userId", Value: account})
-	req.AddCookie(&http.Cookie{Name: "serviceToken", Value: token})
+	req.AddCookie(&http.Cookie{Name: "userId", Value: cfg.xiaomiAccount}) //nolint:gosec // outbound API cookie
+	req.AddCookie(&http.Cookie{Name: "serviceToken", Value: token})       //nolint:gosec // outbound API cookie
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -166,13 +211,17 @@ func callMinaUbus(minaDeviceID, method, path string, msgObj any) (string, error)
 
 func makeStreamURL(songID string) string {
 	salt := "abcdef12"
-	sum := md5.Sum([]byte(navidromePass + salt))
+	sum := md5.Sum([]byte(cfg.navidromePass + salt))
 	token := hex.EncodeToString(sum[:])
 	return fmt.Sprintf("%s/rest/stream/%s.mp3?c=Jukebox&format=mp3&id=%s&s=%s&t=%s&u=%s&v=1.16.1",
-		navidromeBase, songID, songID, salt, token, navidromeUser)
+		cfg.navidromeBase, songID, songID, salt, token, cfg.navidromeUser)
 }
 
 func main() {
+	if err := loadSecrets(); err != nil {
+		fmt.Fprintf(os.Stderr, "配置错误：%v\n", err)
+		os.Exit(1)
+	}
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/api/devices", handleDevices)
 	http.HandleFunc("/api/mina/tts", handleMinaTTS)
@@ -187,9 +236,14 @@ func main() {
 	fmt.Printf("=================================================================\n")
 	fmt.Printf("🚀 小米音箱专属测试与排障控制台已就绪！\n")
 	fmt.Printf("👉 本机浏览器访问: http://localhost:%s\n", defaultPort)
-	fmt.Printf("👉 手机/局域网访问: http://192.168.31.246:%s\n", defaultPort)
+	fmt.Printf("👉 手机/局域网访问: http://<本机局域网IP>:%s\n", defaultPort)
 	fmt.Printf("=================================================================\n")
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           nil,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		panic(err)
 	}
 }
@@ -380,15 +434,17 @@ func handleNavidromePlay(w http.ResponseWriter, r *http.Request) {
 
 	// Select
 	client := &http.Client{Timeout: 5 * time.Second}
-	selReq, _ := http.NewRequest("POST", navidromeBase+"/api/jukebox/select", strings.NewReader(fmt.Sprintf(`{"device_id":%q}`, body.DeviceID)))
-	selReq.Header.Set("X-ND-Authorization", "Bearer "+navidromeJWT)
+	selReq, _ := http.NewRequest("POST", cfg.navidromeBase+"/api/jukebox/select", strings.NewReader(fmt.Sprintf(`{"device_id":%q}`, body.DeviceID)))
+	selReq.Header.Set("X-ND-Authorization", "Bearer "+cfg.navidromeJWT)
 	selReq.Header.Set("Content-Type", "application/json")
-	_, _ = client.Do(selReq)
+	if resp, err := client.Do(selReq); err == nil {
+		_ = resp.Body.Close()
+	}
 
 	// Play
 	start := time.Now()
-	playReq, _ := http.NewRequest("POST", navidromeBase+"/api/jukebox/play", strings.NewReader(fmt.Sprintf(`{"song_id":%q}`, body.SongID)))
-	playReq.Header.Set("X-ND-Authorization", "Bearer "+navidromeJWT)
+	playReq, _ := http.NewRequest("POST", cfg.navidromeBase+"/api/jukebox/play", strings.NewReader(fmt.Sprintf(`{"song_id":%q}`, body.SongID)))
+	playReq.Header.Set("X-ND-Authorization", "Bearer "+cfg.navidromeJWT)
 	playReq.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(playReq)
 	dur := time.Since(start).Milliseconds()
@@ -412,8 +468,8 @@ func handleNavidromeControl(w http.ResponseWriter, r *http.Request) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	start := time.Now()
-	ctrlReq, _ := http.NewRequest("POST", navidromeBase+"/api/jukebox/control", strings.NewReader(fmt.Sprintf(`{"action":%q,"value":%d}`, body.Action, body.Value)))
-	ctrlReq.Header.Set("X-ND-Authorization", "Bearer "+navidromeJWT)
+	ctrlReq, _ := http.NewRequest("POST", cfg.navidromeBase+"/api/jukebox/control", strings.NewReader(fmt.Sprintf(`{"action":%q,"value":%d}`, body.Action, body.Value)))
+	ctrlReq.Header.Set("X-ND-Authorization", "Bearer "+cfg.navidromeJWT)
 	ctrlReq.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(ctrlReq)
 	dur := time.Since(start).Milliseconds()
@@ -431,8 +487,8 @@ func handleNavidromeControl(w http.ResponseWriter, r *http.Request) {
 func handleNavidromeStatus(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	start := time.Now()
-	req, _ := http.NewRequest("GET", navidromeBase+"/api/jukebox/status", nil)
-	req.Header.Set("X-ND-Authorization", "Bearer "+navidromeJWT)
+	req, _ := http.NewRequest("GET", cfg.navidromeBase+"/api/jukebox/status", nil)
+	req.Header.Set("X-ND-Authorization", "Bearer "+cfg.navidromeJWT)
 	resp, err := client.Do(req)
 	dur := time.Since(start).Milliseconds()
 

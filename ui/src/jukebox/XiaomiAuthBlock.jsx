@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { makeStyles } from '@material-ui/core/styles'
 import Button from '@material-ui/core/Button'
 import Card from '@material-ui/core/Card'
@@ -11,6 +11,8 @@ import List from '@material-ui/core/List'
 import ListItem from '@material-ui/core/ListItem'
 import ListItemSecondaryAction from '@material-ui/core/ListItemSecondaryAction'
 import ListItemText from '@material-ui/core/ListItemText'
+import Alert from '@material-ui/lab/Alert'
+import Checkbox from '@material-ui/core/Checkbox'
 import Tab from '@material-ui/core/Tab'
 import Tabs from '@material-ui/core/Tabs'
 import TextField from '@material-ui/core/TextField'
@@ -22,6 +24,7 @@ import ExpandMoreIcon from '@material-ui/icons/ExpandMore'
 import HelpOutlineIcon from '@material-ui/icons/HelpOutline'
 import LockOpenIcon from '@material-ui/icons/LockOpen'
 import RefreshIcon from '@material-ui/icons/Refresh'
+import PlaylistAddIcon from '@material-ui/icons/PlaylistAdd'
 import SpeakerIcon from '@material-ui/icons/Speaker'
 import VpnKeyIcon from '@material-ui/icons/VpnKey'
 import { useForm } from 'react-final-form'
@@ -31,8 +34,20 @@ import {
   loginXiaomiPassword,
   loginXiaomiPassToken,
 } from '../audioplayer/jukebox'
+import { uniqueOutputId } from './outputConstants'
 
 const useStyles = makeStyles((theme) => ({
+  batchBar: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: theme.spacing(1),
+    marginTop: theme.spacing(1),
+    marginBottom: theme.spacing(0.5),
+  },
+  grow: {
+    flex: '1 1 auto',
+  },
   root: {
     marginTop: theme.spacing(1.5),
     marginBottom: theme.spacing(2),
@@ -175,7 +190,13 @@ const isXiaomiSpeaker = (model = '') => {
   )
 }
 
-const XiaomiAuthBlock = ({ formData, isCreate }) => {
+// 没有局域网 IP 的设备没法当输出用（驱动靠 IP 控制/拉流）
+const isUsableDevice = (dev) => Boolean(dev?.localip)
+
+const usableDids = (list) =>
+  (list || []).filter(isUsableDevice).map((d) => d.did)
+
+const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
   const classes = useStyles()
   const form = useForm()
 
@@ -183,6 +204,11 @@ const XiaomiAuthBlock = ({ formData, isCreate }) => {
   const [authResult, setAuthResult] = useState(null) // { userId, passToken, devices: [] }
   const [appliedDevice, setAppliedDevice] = useState(null)
   const [showOtherDevices, setShowOtherDevices] = useState(false)
+  // 批量添加：勾选的设备 DID、已创建成功的 DID、创建过程与结果
+  const [selectedDids, setSelectedDids] = useState([])
+  const [createdDids, setCreatedDids] = useState([])
+  const [batchBusy, setBatchBusy] = useState(false)
+  const [batchResult, setBatchResult] = useState(null)
 
   // QR state
   const [qrInfo, setQrInfo] = useState(null)
@@ -352,9 +378,101 @@ const XiaomiAuthBlock = ({ formData, isCreate }) => {
     [authResult, form, formData.id, isCreate],
   )
 
-  const devices = authResult?.devices || []
-  const speakerDevices = devices.filter((d) => isXiaomiSpeaker(d.model))
-  const otherDevices = devices.filter((d) => !isXiaomiSpeaker(d.model))
+  const devices = useMemo(() => authResult?.devices || [], [authResult])
+  const speakerDevices = useMemo(
+    () => devices.filter((d) => isXiaomiSpeaker(d.model)),
+    [devices],
+  )
+  const otherDevices = useMemo(
+    () => devices.filter((d) => !isXiaomiSpeaker(d.model)),
+    [devices],
+  )
+
+  const toggleDevice = useCallback((did) => {
+    setSelectedDids((prev) =>
+      prev.includes(did) ? prev.filter((d) => d !== did) : [...prev, did],
+    )
+  }, [])
+
+  const isCreated = useCallback(
+    (did) => createdDids.includes(did),
+    [createdDids],
+  )
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedDids((prev) => {
+      const all = usableDids(speakerDevices)
+      return prev.length === all.length ? [] : all
+    })
+  }, [speakerDevices])
+
+  // 一次登录常常能检索到十几台设备，逐台"选用此音箱"要点几十次。这里允许勾选多台，
+  // 一次性建成多个输出设备——每台音箱都是一条独立输出，各自有 token/did/IP。
+  const handleBatchCreate = useCallback(async () => {
+    const targets = devices.filter(
+      (d) => selectedDids.includes(d.did) && isUsableDevice(d),
+    )
+    if (targets.length === 0) return
+
+    setBatchBusy(true)
+    setBatchResult(null)
+    const created = []
+    const failed = []
+    try {
+      // 服务端不接受重复 ID，先把已存在的收进来，再逐台去重
+      const taken = new Set()
+      try {
+        const res = await fetch('/api/jukebox/outputs')
+        if (res.ok) {
+          const list = await res.json()
+          list.forEach((o) => taken.add(o.id))
+        }
+      } catch {
+        // 读不到就靠后面的 400 兜底
+      }
+
+      for (const dev of targets) {
+        const id = uniqueOutputId(dev.name, 'xiaomi', taken)
+        taken.add(id)
+        const payload = {
+          id,
+          name: dev.name || id,
+          type: 'xiaomi',
+          address: dev.localip,
+        }
+        if (dev.token) payload.token = dev.token
+        if (dev.did) payload.did = dev.did
+        if (dev.model) {
+          payload.model = dev.model.replace(/^xiaomi\.wifispeaker\./, '')
+        }
+        if (authResult?.userId) payload.account = String(authResult.userId)
+        if (authResult?.passToken) payload.passToken = authResult.passToken
+        try {
+          const res = await fetch('/api/jukebox/outputs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+          if (res.ok) {
+            created.push(dev)
+          } else {
+            failed.push({ dev, reason: (await res.text()).trim() })
+          }
+        } catch (e) {
+          failed.push({ dev, reason: e.message })
+        }
+      }
+    } finally {
+      setBatchBusy(false)
+    }
+
+    setCreatedDids((prev) => [...prev, ...created.map((d) => d.did)])
+    setSelectedDids((prev) =>
+      prev.filter((did) => !created.some((d) => d.did === did)),
+    )
+    setBatchResult({ created: created.length, failed })
+    if (onBatchCreated) onBatchCreated({ created, failed })
+  }, [devices, selectedDids, authResult, onBatchCreated])
 
   return (
     <Card className={classes.root} variant="outlined">
@@ -393,6 +511,9 @@ const XiaomiAuthBlock = ({ formData, isCreate }) => {
             className={classes.tabs}
             indicatorColor="primary"
             textColor="primary"
+            // 三个 tab 在手机上放不下，固定宽度会溢出屏幕，按 MUI 官方做法改成可滑动
+            variant="scrollable"
+            scrollButtons="auto"
           >
             <Tab
               icon={<CropFreeIcon style={{ fontSize: 18 }} />}
@@ -606,7 +727,8 @@ const XiaomiAuthBlock = ({ formData, isCreate }) => {
                   </Typography>
                   <Typography variant="caption" color="textSecondary">
                     共检索到 {devices.length}{' '}
-                    台智能设备，请在下方点击「选用此音箱」自动填充配置。
+                    台智能设备。勾选多台可一次性添加为输出设备；
+                    单台则用「选用此音箱」填入下方表单。
                   </Typography>
                 </div>
               </div>
@@ -637,12 +759,66 @@ const XiaomiAuthBlock = ({ formData, isCreate }) => {
               >
                 ⭐ 推荐小爱音箱设备 ({speakerDevices.length})
               </Typography>
+              {speakerDevices.length > 0 && (
+                <div className={classes.batchBar}>
+                  <Button
+                    size="small"
+                    onClick={toggleSelectAll}
+                    disabled={batchBusy}
+                  >
+                    {selectedDids.length === usableDids(speakerDevices).length
+                      ? '取消全选'
+                      : '全选'}
+                  </Button>
+                  <Typography variant="caption" color="textSecondary">
+                    已选 {selectedDids.length} 台
+                  </Typography>
+                  <div className={classes.grow} />
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="primary"
+                    onClick={handleBatchCreate}
+                    disabled={batchBusy || selectedDids.length === 0}
+                    startIcon={
+                      batchBusy ? (
+                        <CircularProgress size={14} color="inherit" />
+                      ) : (
+                        <PlaylistAddIcon fontSize="small" />
+                      )
+                    }
+                  >
+                    {batchBusy
+                      ? '正在添加...'
+                      : `添加所选 ${selectedDids.length} 台为输出设备`}
+                  </Button>
+                </div>
+              )}
+              {batchResult && (
+                <Alert
+                  severity={batchResult.failed.length ? 'warning' : 'success'}
+                >
+                  已添加 {batchResult.created} 台输出设备
+                  {batchResult.failed.length > 0 &&
+                    `；${batchResult.failed.length} 台失败：${batchResult.failed
+                      .map((f) => `${f.dev.name}(${f.reason || '未知错误'})`)
+                      .join('、')}`}
+                </Alert>
+              )}
               <List dense>
                 {speakerDevices.map((dev) => (
                   <ListItem
                     key={dev.did}
                     className={`${classes.deviceItem} ${classes.speakerItem}`}
                   >
+                    <Checkbox
+                      edge="start"
+                      size="small"
+                      checked={selectedDids.includes(dev.did)}
+                      disabled={!isUsableDevice(dev) || batchBusy}
+                      onChange={() => toggleDevice(dev.did)}
+                      inputProps={{ 'aria-label': `选择 ${dev.name}` }}
+                    />
                     <ListItemText
                       secondaryTypographyProps={{ component: 'div' }}
                       primary={
@@ -715,20 +891,29 @@ const XiaomiAuthBlock = ({ formData, isCreate }) => {
                     <ListItemSecondaryAction>
                       <Button
                         variant={
-                          appliedDevice === dev.did ? 'outlined' : 'contained'
+                          appliedDevice === dev.did || isCreated(dev.did)
+                            ? 'outlined'
+                            : 'contained'
                         }
                         color={
-                          appliedDevice === dev.did ? 'default' : 'primary'
+                          appliedDevice === dev.did || isCreated(dev.did)
+                            ? 'default'
+                            : 'primary'
                         }
                         size="small"
                         onClick={handlePickDevice(dev)}
+                        disabled={!isUsableDevice(dev)}
                         startIcon={
-                          appliedDevice === dev.did && (
+                          (appliedDevice === dev.did || isCreated(dev.did)) && (
                             <CheckCircleIcon style={{ color: '#4caf50' }} />
                           )
                         }
                       >
-                        {appliedDevice === dev.did ? '已填入' : '选用此音箱'}
+                        {isCreated(dev.did)
+                          ? '已添加'
+                          : appliedDevice === dev.did
+                            ? '已填入'
+                            : '选用此音箱'}
                       </Button>
                     </ListItemSecondaryAction>
                   </ListItem>

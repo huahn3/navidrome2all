@@ -53,11 +53,19 @@ const useStyles = makeStyles((theme) => ({
   root: {
     marginTop: theme.spacing(2),
     marginBottom: theme.spacing(4),
-    maxWidth: 860,
+    // 与「输出设备」控制台保持同一套外壳宽度，桌面端两边页宽一致
+    maxWidth: 980,
     marginLeft: 'auto',
     marginRight: 'auto',
     borderRadius: theme.shape.borderRadius * 2,
     boxShadow: theme.shadows[2],
+    // Layout 是 min-width: fit-content，卡片不显式允许收缩就会把内在宽度传上去
+    minWidth: 0,
+  },
+  // 标题右侧的文字列：允许收缩，长副标题才会换行而不是把卡片撑宽
+  headerText: {
+    flex: 1,
+    minWidth: 0,
   },
   header: {
     padding: theme.spacing(3),
@@ -93,7 +101,13 @@ const useStyles = makeStyles((theme) => ({
     marginTop: theme.spacing(0.5),
   },
   content: {
-    padding: theme.spacing(3),
+    // 手机上 24px 内边距太奢侈（390px 只剩 342px 可用），窄屏收到 16px
+    padding: theme.spacing(2),
+    [theme.breakpoints.up('sm')]: {
+      padding: theme.spacing(3),
+    },
+    // 输入控件的窄屏收缩规则在 index.css 的 .responsive-fields 里，
+    // 必须放全局：JSS 的 `& .MuiXxx` 嵌套选择器在本项目构建下不生成规则。
   },
   section: {
     marginBottom: theme.spacing(3),
@@ -110,17 +124,48 @@ const useStyles = makeStyles((theme) => ({
   field: {
     marginTop: theme.spacing(1.5),
     width: '100%',
+    // 桌面端不让输入框铺满整张卡片（980px 宽的输入框很难看），480px 是常见表单宽度；
+    // 手机上保持 100% 以便点击区域足够大
+    [theme.breakpoints.up('sm')]: {
+      maxWidth: 480,
+    },
+    minWidth: 0,
   },
+  // 栅格里的字段不需要额外的上边距（gap 已经给了）
+  gridField: {
+    width: '100%',
+    minWidth: 0,
+  },
+  // 字段组：手机单列、桌面双列。
+  // 用 grid 而不是 flex + `flex: 1 1 240px`：后者在窄屏不会真的换行，
+  // 反而被 Select 的内容宽度顶成两列半宽控件（每个只剩 150px，文字全被省略号吃掉）。
+  // `minmax(0, 1fr)` 是关键——默认的 minmax(auto, 1fr) 不允许轨道窄于内容。
   row: {
-    display: 'flex',
+    display: 'grid',
     gap: theme.spacing(2),
-    flexWrap: 'wrap',
+    gridTemplateColumns: '1fr',
+    [theme.breakpoints.up('sm')]: {
+      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    },
     '& > *': {
-      flex: '1 1 240px',
+      minWidth: 0,
+    },
+  },
+  // 三个字段一组的场合（API Key / Base URL / 代理等）：桌面三列
+  row3: {
+    display: 'grid',
+    gap: theme.spacing(2),
+    gridTemplateColumns: '1fr',
+    [theme.breakpoints.up('md')]: {
+      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    },
+    '& > *': {
+      minWidth: 0,
     },
   },
   engineCard: {
     padding: theme.spacing(1.5),
+    overflowWrap: 'anywhere',
     borderRadius: theme.shape.borderRadius,
     background: theme.palette.action.hover,
     marginTop: theme.spacing(1),
@@ -196,6 +241,14 @@ const useStyles = makeStyles((theme) => ({
     marginTop: theme.spacing(2),
     borderRadius: theme.shape.borderRadius,
     border: `1px solid ${theme.palette.divider}`,
+    // 窄屏时让表格在自己容器里横向滚动，而不是把整页撑宽导致右侧内容被裁。
+    // contain: inline-size 不能省：光有 overflow-x:auto 时容器作为普通块，
+    // min-content 仍等于表格宽度（实测 524px），Layout(fit-content) 照样被撑宽。
+    overflowX: 'auto',
+    contain: 'inline-size',
+    '& table': {
+      minWidth: 480,
+    },
   },
   dialogWarningBox: {
     display: 'flex',
@@ -232,51 +285,83 @@ const useStyles = makeStyles((theme) => ({
   },
 }))
 
-const ENGINE_OPTIONS = [
-  {
-    id: 'gemini',
-    label:
-      'Google Gemini (支持 gemini-flash-latest / gemini-flash-lite-latest)',
-  },
-  { id: 'zhipu', label: '智谱 GLM (glm-4-flash，免费高效)' },
-  { id: 'baidu', label: '百度翻译 (传统 API)' },
-  { id: 'google', label: 'Google Translate (免费公共接口)' },
-  { id: 'openai', label: 'OpenAI 兼容接口 (DeepSeek、Groq、自建 API)' },
-]
+// 选项文案要短：Select 的选项宽度会变成控件的 min-content，
+// 文案一长就把整页撑到 500+ px，手机端右侧被裁（详见 docs/risk-notes-optimization.md §11）。
+// 详细说明交给下面的 ENGINE_NOTES 卡片与"模型"字段。
+// 引擎名走 i18n：早期这里硬编码中文，英文界面下会出现中英混排。
+// key 一律写成**字面量**，不要用模板字符串拼。
+// 拼接出来的 key 抓不到、也校验不到：曾经把语言包写成 `lang.zhCN`、代码却拼
+// `lang.zh-CN`，结果中文选项全部静默回退成语言码，界面上显示 "zh-CN"。
+const ENGINE_IDS = ['gemini', 'zhipu', 'baidu', 'google', 'openai']
 
-const GEMINI_MODEL_OPTIONS = [
-  {
-    id: 'gemini-flash-latest',
-    label: 'gemini-flash-latest (最新 Flash 模型，效果最好，推荐)',
-  },
-  {
-    id: 'gemini-flash-lite-latest',
-    label: 'gemini-flash-lite-latest (最新 Flash-Lite 模型，响应最快更省额度)',
-  },
-]
-
-const ENGINE_NOTES = {
-  gemini:
-    'Key 来自 Google AI Studio (aistudio.google.com)。免费配额充足，支持最新的 gemini-flash-latest 与 gemini-flash-lite-latest 模型。若在国内服务器部署且直连受阻，可填写下方的 HTTP 代理或 Base URL。',
-  zhipu:
-    'Key 来自智谱开放平台 (open.bigmodel.cn)。默认使用 glm-4-flash 模型，调用速度极快且完全免费。',
-  baidu:
-    '需要百度翻译开放平台 (fanyi.baidu.com/api) 的 App ID 与密钥 (Secret Key)。',
-  google: '使用 Google 免费公共翻译接口，无需 API Key，但受限于公共请求频率。',
-  openai:
-    '适用于所有兼容 OpenAI 格式的服务（例如 DeepSeek、Moonshot、Groq、Ollama、OneAPI 等），需填写 API Base URL 与 API Key。',
+const ENGINE_LABEL_KEYS = {
+  gemini: 'menu.lyricsTranslation.engine.gemini',
+  zhipu: 'menu.lyricsTranslation.engine.zhipu',
+  baidu: 'menu.lyricsTranslation.engine.baidu',
+  google: 'menu.lyricsTranslation.engine.google',
+  openai: 'menu.lyricsTranslation.engine.openai',
 }
 
-const LANG_OPTIONS = [
-  { id: 'zh-CN', label: '简体中文 (zh-CN)' },
-  { id: 'zh-TW', label: '繁體中文 (zh-TW)' },
-  { id: 'en', label: 'English (en)' },
-  { id: 'ja', label: '日本語 (ja)' },
-  { id: 'ko', label: '한국어 (ko)' },
-  { id: 'fr', label: 'Français (fr)' },
-  { id: 'de', label: 'Deutsch (de)' },
-  { id: 'es', label: 'Español (es)' },
+const engineLabel = (t, id) => t(ENGINE_LABEL_KEYS[id] || id, { _: id })
+
+// 标签只放模型 id：括号里的取舍说明挪到下面的 helper 文本里，
+// 否则 320px 窄屏上控件的 min-content 仍然降不下来。
+const GEMINI_MODEL_OPTIONS = [
+  { id: 'gemini-flash-latest', label: 'gemini-flash-latest' },
+  { id: 'gemini-flash-lite-latest', label: 'gemini-flash-lite-latest' },
 ]
+
+const ENGINE_NOTE_KEYS = {
+  gemini: 'menu.lyricsTranslation.note.gemini',
+  zhipu: 'menu.lyricsTranslation.note.zhipu',
+  baidu: 'menu.lyricsTranslation.note.baidu',
+  google: 'menu.lyricsTranslation.note.google',
+  openai: 'menu.lyricsTranslation.note.openai',
+}
+
+const engineNote = (t, engine) =>
+  t(ENGINE_NOTE_KEYS[engine] || 'menu.lyricsTranslation.note.unknown', {
+    _: '',
+  })
+
+// 配置里存了不在下面列表里的语言码时，Select 会渲染成一片空白，
+// 用户完全看不出当前设置的是什么。把当前值补进选项里，避免这种误导。
+const languageOptionsFor = (t, current) => {
+  const list = LANG_IDS.map((id) => ({ id, label: langLabel(t, id) }))
+  if (current && !list.some((o) => o.id === current)) {
+    return [
+      ...list,
+      {
+        id: current,
+        label: t('menu.lyricsTranslation.lang.currentValue', {
+          _: '%{code} (current value)',
+          code: current,
+        }),
+      },
+    ]
+  }
+  return list
+}
+
+const LANG_IDS = ['zh-CN', 'zh-TW', 'en', 'ja', 'ko', 'fr', 'de', 'es']
+
+// 语言码带连字符（zh-CN），和 key 名（zhCN）不一样，所以必须显式映射，
+// 不能靠 `lang.${id}` 拼——拼出来的是 `lang.zh-CN`，语言包里根本没有这个 key。
+const LANG_LABEL_KEYS = {
+  'zh-CN': 'menu.lyricsTranslation.lang.zhCN',
+  'zh-TW': 'menu.lyricsTranslation.lang.zhTW',
+  en: 'menu.lyricsTranslation.lang.en',
+  ja: 'menu.lyricsTranslation.lang.ja',
+  ko: 'menu.lyricsTranslation.lang.ko',
+  fr: 'menu.lyricsTranslation.lang.fr',
+  de: 'menu.lyricsTranslation.lang.de',
+  es: 'menu.lyricsTranslation.lang.es',
+}
+
+const langLabel = (t, id) =>
+  t(LANG_LABEL_KEYS[id] || 'menu.lyricsTranslation.lang.currentValue', {
+    _: id,
+  })
 
 const emptyConfig = {
   enabled: false,
@@ -399,7 +484,11 @@ const LyricsTranslation = () => {
         } else {
           setTestResult({
             success: false,
-            error: res.json?.error || '未知错误',
+            error:
+              res.json?.error ||
+              translate('menu.lyricsTranslation.error.unknown', {
+                _: '未知错误',
+              }),
           })
         }
       })
@@ -409,7 +498,9 @@ const LyricsTranslation = () => {
           error:
             err?.message ||
             err?.body?.error ||
-            '请求失败，请检查网络或服务配置',
+            translate('menu.lyricsTranslation.error.requestFailed', {
+              _: '请求失败，请检查网络或服务配置',
+            }),
         })
       })
       .finally(() => setTesting(false))
@@ -648,7 +739,7 @@ const LyricsTranslation = () => {
         <Box className={classes.headerIcon}>
           <MdTranslate />
         </Box>
-        <Box>
+        <Box className={classes.headerText}>
           <Typography className={classes.title}>
             {translate('menu.lyricsTranslation.title', { _: '歌词双语翻译' })}
           </Typography>
@@ -660,7 +751,7 @@ const LyricsTranslation = () => {
         </Box>
       </Box>
 
-      <CardContent className={classes.content}>
+      <CardContent className={`${classes.content} responsive-fields`}>
         {/* Enable / Disable switch */}
         <Box className={classes.section}>
           <FormControlLabel
@@ -687,7 +778,10 @@ const LyricsTranslation = () => {
           </FormHelperText>
         </Box>
 
-        <Collapse in={!!cfg.enabled}>
+        {/* unmountOnExit 不可省：MUI 折叠起来的内容仍参与 min-content 计算，
+            而 Layout 是 min-width: fit-content，于是整页被撑到 500+px 宽，
+            手机端右侧整块被裁掉（且开关关闭时这些字段根本不可见）。 */}
+        <Collapse in={!!cfg.enabled} unmountOnExit>
           <Divider style={{ marginBottom: 24 }} />
 
           {/* Engine Selection */}
@@ -708,11 +802,11 @@ const LyricsTranslation = () => {
                 onChange={handleChange('engine')}
                 variant="outlined"
                 size="small"
-                className={classes.field}
+                className={classes.gridField}
               >
-                {ENGINE_OPTIONS.map((o) => (
-                  <MenuItem key={o.id} value={o.id}>
-                    {o.label}
+                {ENGINE_IDS.map((id) => (
+                  <MenuItem key={id} value={id}>
+                    {engineLabel(translate, id)}
                   </MenuItem>
                 ))}
               </TextField>
@@ -726,9 +820,9 @@ const LyricsTranslation = () => {
                 onChange={handleChange('targetLanguage')}
                 variant="outlined"
                 size="small"
-                className={classes.field}
+                className={classes.gridField}
               >
-                {LANG_OPTIONS.map((o) => (
+                {languageOptionsFor(translate, cfg.targetLanguage).map((o) => (
                   <MenuItem key={o.id} value={o.id}>
                     {o.label}
                   </MenuItem>
@@ -737,9 +831,9 @@ const LyricsTranslation = () => {
             </Box>
 
             {/* Engine Description Note */}
-            {cfg.engine && ENGINE_NOTES[cfg.engine] && (
+            {cfg.engine && engineNote(translate, cfg.engine) && (
               <Box className={classes.engineCard}>
-                {ENGINE_NOTES[cfg.engine]}
+                {engineNote(translate, cfg.engine)}
               </Box>
             )}
 
@@ -755,11 +849,16 @@ const LyricsTranslation = () => {
                 variant="outlined"
                 size="small"
                 className={classes.field}
-                helperText="支持 Google Gemini 最新发布的 flash 与 flash-lite 模型"
+                helperText={translate(
+                  'menu.lyricsTranslation.hint.geminiModel',
+                  {
+                    _: 'flash 效果最好（推荐）；flash-lite 响应更快、更省额度',
+                  },
+                )}
               >
                 {GEMINI_MODEL_OPTIONS.map((o) => (
                   <MenuItem key={o.id} value={o.id}>
-                    {o.label}
+                    {engineLabel(translate, o.id)}
                   </MenuItem>
                 ))}
               </TextField>
@@ -776,7 +875,12 @@ const LyricsTranslation = () => {
                 variant="outlined"
                 size="small"
                 className={classes.field}
-                helperText="默认使用 glm-4-flash (完全免费调用)"
+                helperText={translate(
+                  'menu.lyricsTranslation.hint.zhipuModel',
+                  {
+                    _: '默认使用 glm-4-flash (完全免费调用)',
+                  },
+                )}
               />
             )}
 
@@ -791,7 +895,12 @@ const LyricsTranslation = () => {
                 variant="outlined"
                 size="small"
                 className={classes.field}
-                helperText="例如 gpt-4o-mini、deepseek-chat、qwen-plus 等"
+                helperText={translate(
+                  'menu.lyricsTranslation.hint.openaiModel',
+                  {
+                    _: '例如 gpt-4o-mini、deepseek-chat、qwen-plus 等',
+                  },
+                )}
               />
             )}
           </Box>
@@ -886,8 +995,12 @@ const LyricsTranslation = () => {
               <TextField
                 label={translate('menu.lyricsTranslation.baseUrl', {
                   _: isGemini
-                    ? '自定义 Base URL (反向代理，可选)'
-                    : 'API Base URL (例如 https://api.deepseek.com/v1)',
+                    ? translate('menu.lyricsTranslation.label.baseUrlCustom', {
+                        _: '自定义 Base URL (反向代理，可选)',
+                      })
+                    : translate('menu.lyricsTranslation.label.baseUrlExample', {
+                        _: 'API Base URL (例如 https://api.deepseek.com/v1)',
+                      }),
                 })}
                 value={cfg.baseUrl || ''}
                 onChange={handleChange('baseUrl')}
@@ -901,8 +1014,12 @@ const LyricsTranslation = () => {
                 }
                 helperText={
                   isGemini
-                    ? '直连受阻或使用了 Gemini 反向代理时填写，留空默认官方地址。'
-                    : 'OpenAI 兼容接口必填服务商提供的 Base URL。'
+                    ? translate('menu.lyricsTranslation.hint.baseUrlGemini', {
+                        _: '直连受阻或使用了 Gemini 反向代理时填写，留空默认官方地址。',
+                      })
+                    : translate('menu.lyricsTranslation.hint.baseUrlOpenai', {
+                        _: 'OpenAI 兼容接口必填服务商提供的 Base URL。',
+                      })
                 }
               />
             )}
@@ -946,7 +1063,13 @@ const LyricsTranslation = () => {
                 fullWidth
               />
 
-              <Box mt={2} display="flex" alignItems="center" gap={2}>
+              <Box
+                mt={2}
+                display="flex"
+                alignItems="center"
+                gap={2}
+                flexWrap="wrap"
+              >
                 <Button
                   variant="outlined"
                   color="primary"
@@ -966,7 +1089,9 @@ const LyricsTranslation = () => {
                       })}
                 </Button>
                 <Typography variant="caption" color="textSecondary">
-                  测试会直接调用上方配置的引擎与密钥验证连通性
+                  {translate('menu.lyricsTranslation.note.test', {
+                    _: '测试会直接调用上方配置的引擎与密钥验证连通性',
+                  })}
                 </Typography>
               </Box>
 
@@ -1048,7 +1173,10 @@ const LyricsTranslation = () => {
 
             <Box className={classes.cacheActionButtons}>
               <Chip
-                label={`已缓存: ${cachedList.length} 首`}
+                label={translate('menu.lyricsTranslation.label.cachedCount', {
+                  _: '已缓存: %{count} 首',
+                  count: cachedList.length,
+                })}
                 color="primary"
                 variant="outlined"
                 size="small"
@@ -1077,7 +1205,11 @@ const LyricsTranslation = () => {
                   _: '清空全部缓存',
                 })}
               </Button>
-              <Tooltip title="刷新缓存列表">
+              <Tooltip
+                title={translate('menu.lyricsTranslation.tip.refreshCache', {
+                  _: '刷新缓存列表',
+                })}
+              >
                 <IconButton
                   size="small"
                   onClick={fetchCacheList}
@@ -1123,7 +1255,9 @@ const LyricsTranslation = () => {
                   startIcon={<MdStop />}
                   onClick={handleCancelBatch}
                 >
-                  终止任务
+                  {translate('menu.lyricsTranslation.action.stopTask', {
+                    _: '终止任务',
+                  })}
                 </Button>
               </Box>
 
@@ -1143,28 +1277,38 @@ const LyricsTranslation = () => {
                 display="flex"
                 justifyContent="space-between"
                 alignItems="center"
+                flexWrap="wrap"
+                gap={1}
               >
                 <Typography variant="body2" color="textSecondary">
-                  当前进度: {batchStatus.processed} / {batchStatus.total} (
-                  {batchStatus.total > 0
-                    ? Math.round(
-                        (batchStatus.processed / batchStatus.total) * 100,
-                      )
-                    : 0}
-                  %)
+                  {translate('menu.lyricsTranslation.label.batchProgress', {
+                    _: '当前进度: %{processed} / %{total} (%{percent}%)',
+                    processed: batchStatus.processed,
+                    total: batchStatus.total,
+                    percent:
+                      batchStatus.total > 0
+                        ? Math.round(
+                            (batchStatus.processed / batchStatus.total) * 100,
+                          )
+                        : 0,
+                  })}
                   {batchStatus.current
-                    ? ` — 处理中: ${batchStatus.current}`
+                    ? translate('menu.lyricsTranslation.label.batchCurrent', {
+                        _: ' — 处理中: %{name}',
+                        name: batchStatus.current,
+                      })
                     : ''}
                 </Typography>
                 <Typography variant="body2" color="textSecondary">
-                  成功:{' '}
-                  <span style={{ color: '#4caf50', fontWeight: 600 }}>
-                    {batchStatus.success}
-                  </span>{' '}
-                  | 失败:{' '}
-                  <span style={{ color: '#f44336', fontWeight: 600 }}>
-                    {batchStatus.failed}
-                  </span>
+                  {translate('menu.lyricsTranslation.label.batchSucceeded', {
+                    _: '成功: %{count}',
+                    count: batchStatus.success,
+                  })}
+                  {' | '}
+                  {translate('menu.lyricsTranslation.label.batchFailed', {
+                    _: '失败: %{count}',
+                    count: batchStatus.failed,
+                  })}
                 </Typography>
               </Box>
             </Paper>
@@ -1175,7 +1319,9 @@ const LyricsTranslation = () => {
             <TextField
               variant="outlined"
               size="small"
-              placeholder="输入歌曲 ID 重新翻译单首歌曲..."
+              placeholder={translate('menu.lyricsTranslation.ph.songId', {
+                _: '输入歌曲 ID 重新翻译单首歌曲...',
+              })}
               value={singleInputId}
               onChange={(e) => setSingleInputId(e.target.value)}
               style={{ flex: '1 1 280px' }}
@@ -1201,7 +1347,9 @@ const LyricsTranslation = () => {
                 )
               }
             >
-              重新翻译此歌曲
+              {translate('menu.lyricsTranslation.action.retranslateSong', {
+                _: '重新翻译此歌曲',
+              })}
             </Button>
           </Box>
 
@@ -1211,15 +1359,22 @@ const LyricsTranslation = () => {
               display="flex"
               justifyContent="space-between"
               alignItems="center"
+              flexWrap="wrap"
+              gap={1}
               mb={1}
             >
               <Typography variant="subtitle2" style={{ fontWeight: 600 }}>
-                已缓存歌曲列表 ({filteredList.length})
+                {translate('menu.lyricsTranslation.label.cachedList', {
+                  _: '已缓存歌曲列表 (%{count})',
+                  count: filteredList.length,
+                })}
               </Typography>
               <TextField
                 variant="outlined"
                 size="small"
-                placeholder="搜索歌名、歌手或模型..."
+                placeholder={translate('menu.lyricsTranslation.ph.search', {
+                  _: '搜索歌名、歌手或模型...',
+                })}
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
                 style={{ width: 220 }}
@@ -1242,7 +1397,9 @@ const LyricsTranslation = () => {
                 style={{ padding: 24, textAlign: 'center', color: '#888' }}
                 elevation={0}
               >
-                暂无已缓存的翻译歌曲。在播放器中点击「翻译歌词」后，结果将自动缓存在这里。
+                {translate('menu.lyricsTranslation.empty.noCached', {
+                  _: '暂无已缓存的翻译歌曲。在播放器中点击「翻译歌词」后，结果将自动缓存在这里。',
+                })}
               </Paper>
             ) : (
               <TableContainer
@@ -1253,11 +1410,31 @@ const LyricsTranslation = () => {
                 <Table size="small" stickyHeader>
                   <TableHead>
                     <TableRow>
-                      <TableCell>歌曲</TableCell>
-                      <TableCell>语言</TableCell>
-                      <TableCell>翻译模型</TableCell>
-                      <TableCell>更新时间</TableCell>
-                      <TableCell align="right">操作</TableCell>
+                      <TableCell>
+                        {translate('menu.lyricsTranslation.th.song', {
+                          _: 'Song',
+                        })}
+                      </TableCell>
+                      <TableCell>
+                        {translate('menu.lyricsTranslation.th.language', {
+                          _: 'Language',
+                        })}
+                      </TableCell>
+                      <TableCell>
+                        {translate('menu.lyricsTranslation.th.model', {
+                          _: 'Model',
+                        })}
+                      </TableCell>
+                      <TableCell>
+                        {translate('menu.lyricsTranslation.th.updated', {
+                          _: 'Updated',
+                        })}
+                      </TableCell>
+                      <TableCell align="right">
+                        {translate('menu.lyricsTranslation.th.actions', {
+                          _: 'Actions',
+                        })}
+                      </TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -1308,7 +1485,14 @@ const LyricsTranslation = () => {
                             </Typography>
                           </TableCell>
                           <TableCell align="right">
-                            <Tooltip title="使用当前选定模型重新翻译此歌曲">
+                            <Tooltip
+                              title={translate(
+                                'menu.lyricsTranslation.tip.retranslateModel',
+                                {
+                                  _: '使用当前选定模型重新翻译此歌曲',
+                                },
+                              )}
+                            >
                               <span>
                                 <IconButton
                                   size="small"
@@ -1328,7 +1512,14 @@ const LyricsTranslation = () => {
                                 </IconButton>
                               </span>
                             </Tooltip>
-                            <Tooltip title="删除该歌曲翻译缓存">
+                            <Tooltip
+                              title={translate(
+                                'menu.lyricsTranslation.tip.deleteCache',
+                                {
+                                  _: '删除该歌曲翻译缓存',
+                                },
+                              )}
+                            >
                               <span>
                                 <IconButton
                                   size="small"
@@ -1373,27 +1564,68 @@ const LyricsTranslation = () => {
           <DialogContent>
             <Box className={classes.dialogWarningBox}>
               <Typography variant="body2" style={{ fontWeight: 600 }}>
-                当前生效模型：{cfg.engine} ({cfg.model || '默认'})
+                {translate(
+                  'menu.lyricsTranslation.confirm.retranslateAllModel',
+                  {
+                    _: '当前生效模型：%{engine} (%{model})',
+                    engine: cfg.engine,
+                    model:
+                      cfg.model ||
+                      translate('menu.lyricsTranslation.confirm.defaultModel', {
+                        _: '默认',
+                      }),
+                  },
+                )}
               </Typography>
             </Box>
             <DialogContentText>
-              您即将对已缓存的全部 <strong>{cachedList.length}</strong>{' '}
-              首歌曲发起重新翻译。
+              <span
+                dangerouslySetInnerHTML={{
+                  __html: translate(
+                    'menu.lyricsTranslation.confirm.retranslateAllBody',
+                    {
+                      _: '您即将对已缓存的全部 <strong>%{count}</strong> 首歌曲发起重新翻译。',
+                      count: cachedList.length,
+                    },
+                  ),
+                }}
+              />
             </DialogContentText>
             <DialogContentText>
-              ⚠️ <strong>注意事项：</strong>
+              ⚠️{' '}
+              <strong>
+                {translate(
+                  'menu.lyricsTranslation.confirm.retranslateAllNotes',
+                  {
+                    _: '注意事项',
+                  },
+                )}
+              </strong>
               <br />
-              1. 此操作将覆盖本地现有的全部翻译缓存；
+              1.{' '}
+              {translate('menu.lyricsTranslation.confirm.retranslateAllNote1', {
+                _: '此操作将覆盖本地现有的全部翻译缓存；',
+              })}
               <br />
-              2. 系统将在后台逐一调用外部 AI
-              接口重新翻译，根据歌曲数量可能消耗较多 API 配额并需要数分钟；
+              2.{' '}
+              {translate('menu.lyricsTranslation.confirm.retranslateAllNote2', {
+                _: '系统将在后台逐一调用外部 AI 接口重新翻译，根据歌曲数量可能消耗较多 API 配额并需要数分钟；',
+              })}
               <br />
-              3. 重新翻译过程中您随时可以在本页面点击终止任务。
+              3.{' '}
+              {translate('menu.lyricsTranslation.confirm.retranslateAllNote3', {
+                _: '重新翻译过程中您随时可以在本页面点击终止任务。',
+              })}
             </DialogContentText>
             <DialogContentText
               style={{ fontWeight: 600, color: '#f44336', marginTop: 16 }}
             >
-              确定要立即重新翻译所有歌曲吗？
+              {translate(
+                'menu.lyricsTranslation.confirm.retranslateAllAction',
+                {
+                  _: '确定要立即重新翻译所有歌曲吗？',
+                },
+              )}
             </DialogContentText>
           </DialogContent>
           <DialogActions style={{ padding: '16px 24px' }}>
@@ -1401,7 +1633,7 @@ const LyricsTranslation = () => {
               onClick={() => setRetranslateAllDialogOpen(false)}
               color="default"
             >
-              取消
+              {translate('menu.lyricsTranslation.action.cancel', { _: '取消' })}
             </Button>
             <Button
               onClick={handleConfirmRetranslateAll}
@@ -1410,7 +1642,12 @@ const LyricsTranslation = () => {
               style={{ backgroundColor: '#f44336', color: '#fff' }}
               startIcon={<MdRefresh />}
             >
-              确认重新翻译全部歌曲
+              {translate(
+                'menu.lyricsTranslation.confirm.retranslateAllConfirm',
+                {
+                  _: '确认重新翻译全部歌曲',
+                },
+              )}
             </Button>
           </DialogActions>
         </Dialog>
@@ -1424,15 +1661,28 @@ const LyricsTranslation = () => {
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
             <MdDelete color="#f44336" size={24} />
-            确认清空全部翻译缓存？
+            {translate('menu.lyricsTranslation.confirm.clearCacheTitle', {
+              _: '确认清空全部翻译缓存？',
+            })}
           </DialogTitle>
           <DialogContent>
             <DialogContentText>
-              清空后，本地磁盘上已保存的全部{' '}
-              <strong>{cachedList.length}</strong> 首歌曲翻译文件将被永久删除。
+              <span
+                dangerouslySetInnerHTML={{
+                  __html: translate(
+                    'menu.lyricsTranslation.confirm.clearCacheBody',
+                    {
+                      _: '清空后，本地磁盘上已保存的全部 <strong>%{count}</strong> 首歌曲翻译文件将被永久删除。',
+                      count: cachedList.length,
+                    },
+                  ),
+                }}
+              />
             </DialogContentText>
             <DialogContentText>
-              用户之后在播放器中点击翻译时，将自动使用当前配置的新模型重新生成双语歌词。
+              {translate('menu.lyricsTranslation.confirm.clearCacheBody2', {
+                _: '用户之后在播放器中点击翻译时，将自动使用当前配置的新模型重新生成双语歌词。',
+              })}
             </DialogContentText>
           </DialogContent>
           <DialogActions style={{ padding: '16px 24px' }}>
@@ -1440,7 +1690,7 @@ const LyricsTranslation = () => {
               onClick={() => setClearAllDialogOpen(false)}
               color="default"
             >
-              取消
+              {translate('menu.lyricsTranslation.action.cancel', { _: '取消' })}
             </Button>
             <Button
               onClick={handleConfirmClearAll}
@@ -1448,7 +1698,9 @@ const LyricsTranslation = () => {
               color="secondary"
               style={{ backgroundColor: '#f44336', color: '#fff' }}
             >
-              确认清空全部缓存
+              {translate('menu.lyricsTranslation.confirm.clearCacheAction', {
+                _: '确认清空全部缓存',
+              })}
             </Button>
           </DialogActions>
         </Dialog>

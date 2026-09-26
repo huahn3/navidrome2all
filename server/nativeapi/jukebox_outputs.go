@@ -38,23 +38,48 @@ type jukeboxOutputDTO struct {
 	Source string `json:"source"`
 }
 
+// secretMask is what GET returns instead of a stored credential. The UI shows it
+// as "already saved"; sending it back on PUT keeps the stored value, so masking
+// never costs the user their password. Same convention as the lyrics
+// translation config (lyrics.GetMaskedConfig).
+const secretMask = "********"
+
+func maskSecret(v string) string {
+	if v == "" {
+		return ""
+	}
+	return secretMask
+}
+
+// outputToDTO renders an output for the admin UI, with credentials masked.
 func outputToDTO(dev conf.JukeboxOutputDevice, source string) jukeboxOutputDTO {
 	return jukeboxOutputDTO{
 		ID: dev.ID, Name: dev.Name, Type: strings.ToLower(dev.Type), Address: dev.Address,
-		Password: dev.Password, PathFrom: dev.PathFrom, PathTo: dev.PathTo,
-		Token: dev.Token, DID: dev.DID, Model: dev.Model, Account: dev.Account,
-		PassToken: dev.PassToken, TextDirective: dev.TextDirective, Source: source,
+		Password: maskSecret(dev.Password), PathFrom: dev.PathFrom, PathTo: dev.PathTo,
+		Token: maskSecret(dev.Token), DID: dev.DID, Model: dev.Model, Account: dev.Account,
+		PassToken: maskSecret(dev.PassToken), TextDirective: dev.TextDirective, Source: source,
 	}
 }
 
-func outputFromDTO(dto jukeboxOutputDTO) conf.JukeboxOutputDevice {
+// outputFromDTO builds the device to store. A secret that arrives masked or empty
+// keeps the value from prev, so editing a device in the UI never wipes the
+// password/token it already has.
+func outputFromDTO(dto jukeboxOutputDTO, prev conf.JukeboxOutputDevice) conf.JukeboxOutputDevice {
+	keep := func(incoming, stored string) string {
+		incoming = strings.TrimSpace(incoming)
+		if incoming == "" || incoming == secretMask {
+			return stored
+		}
+		return incoming
+	}
 	return conf.JukeboxOutputDevice{
 		ID: strings.TrimSpace(dto.ID), Name: strings.TrimSpace(dto.Name),
 		Type: strings.ToLower(strings.TrimSpace(dto.Type)), Address: strings.TrimSpace(dto.Address),
-		Password: dto.Password, PathFrom: dto.PathFrom, PathTo: dto.PathTo,
-		Token: strings.TrimSpace(dto.Token), DID: strings.TrimSpace(dto.DID),
+		Password: keep(dto.Password, prev.Password), PathFrom: dto.PathFrom, PathTo: dto.PathTo,
+		Token: keep(dto.Token, prev.Token), DID: strings.TrimSpace(dto.DID),
 		Model: strings.TrimSpace(dto.Model), Account: strings.TrimSpace(dto.Account),
-		PassToken: strings.TrimSpace(dto.PassToken), TextDirective: strings.TrimSpace(dto.TextDirective),
+		PassToken:     keep(dto.PassToken, prev.PassToken),
+		TextDirective: strings.TrimSpace(dto.TextDirective),
 	}
 }
 
@@ -82,6 +107,8 @@ func (api *Router) addJukeboxOutputsRoute(r chi.Router) {
 		})
 	})
 	r.With(adminOnlyMiddleware).Get("/discover", api.jukeboxDiscover)
+	r.With(adminOnlyMiddleware).Get("/discover/mpd", api.jukeboxDiscoverMPD)
+	r.With(adminOnlyMiddleware).Post("/verify/mpd", api.jukeboxVerifyMPD)
 }
 
 // jukeboxOutputsGuard requires the jukebox feature and an admin user.
@@ -114,6 +141,7 @@ func (api *Router) jukeboxListOutputs(w http.ResponseWriter, r *http.Request) {
 		dtos = append(dtos, outputToDTO(dev, source))
 	}
 	w.Header().Set("X-Total-Count", strconv.Itoa(len(dtos)))
+	w.Header().Set("Cache-Control", "no-store")
 	if err := rest.RespondWithJSON(w, http.StatusOK, dtos); err != nil {
 		log.Error(r.Context(), "Error writing jukebox outputs response", err)
 	}
@@ -150,7 +178,7 @@ func (api *Router) jukeboxCreateOutput(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	dev := outputFromDTO(dto)
+	dev := outputFromDTO(dto, conf.JukeboxOutputDevice{})
 	if err := jukebox.ValidateOutput(dev); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -190,17 +218,35 @@ func (api *Router) jukeboxUpdateOutput(w http.ResponseWriter, r *http.Request) {
 	}
 	// The URL id wins: ids are immutable through this endpoint.
 	dto.ID = id
-	dev := outputFromDTO(dto)
-	if err := jukebox.ValidateOutput(dev); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
 
 	outputsMu.Lock()
 	defer outputsMu.Unlock()
 	ctx := r.Context()
 	m := jukebox.GetInstance()
 	stored := m.StoredOutputs()
+
+	// Merge against whatever is currently in effect, so masked secrets sent back
+	// by the UI keep the stored value (and overriding a file-configured output
+	// inherits the credentials from the config file).
+	var prev conf.JukeboxOutputDevice
+	havePrev := false
+	for _, cur := range jukebox.EffectiveOutputs(conf.Server.Jukebox.Outputs, stored) {
+		if cur.ID == id {
+			prev, havePrev = cur, true
+			break
+		}
+	}
+	if !havePrev {
+		http.Error(w, "output not found", http.StatusNotFound)
+		return
+	}
+
+	dev := outputFromDTO(dto, prev)
+	if err := jukebox.ValidateOutput(dev); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	found := false
 	for i, existing := range stored {
 		if existing.ID == id {
@@ -293,6 +339,57 @@ func (api *Router) jukeboxDiscover(w http.ResponseWriter, r *http.Request) {
 	if err := rest.RespondWithJSON(w, http.StatusOK, renderers); err != nil {
 		log.Error(r.Context(), "Error writing jukebox discovery response", err)
 	}
+}
+
+// jukeboxDiscoverMPD probes the local networks for MPD instances. MPD has no
+// discovery protocol, so this opens short TCP connections to the standard port
+// on the local /24s; the timeout query parameter (1-15 seconds, default 4)
+// bounds it. Admin-only, like the DLNA discovery.
+func (api *Router) jukeboxDiscoverMPD(w http.ResponseWriter, r *http.Request) {
+	if !jukeboxOutputsGuard(w, r) {
+		return
+	}
+	timeout := 4 * time.Second
+	if raw := strings.TrimSpace(r.URL.Query().Get("timeout")); raw != "" {
+		if secs, err := strconv.Atoi(raw); err == nil && secs >= 1 && secs <= 15 {
+			timeout = time.Duration(secs) * time.Second
+		}
+	}
+	port := jukebox.MPDDefaultPort
+	if raw := strings.TrimSpace(r.URL.Query().Get("port")); raw != "" {
+		if p, err := strconv.Atoi(raw); err == nil && p > 0 && p < 65536 {
+			port = p
+		}
+	}
+	found := jukebox.DiscoverMPD(r.Context(), port, timeout)
+	w.Header().Set("X-Total-Count", strconv.Itoa(len(found)))
+	if err := rest.RespondWithJSON(w, http.StatusOK, found); err != nil {
+		log.Error(r.Context(), "Error writing MPD discovery response", err)
+	}
+}
+
+// jukeboxVerifyMPD performs a real MPD login so the UI can validate an address
+// and password before the output is saved. Never echoes the password back.
+func (api *Router) jukeboxVerifyMPD(w http.ResponseWriter, r *http.Request) {
+	if !jukeboxOutputsGuard(w, r) {
+		return
+	}
+	var body struct {
+		Address  string `json:"address"`
+		Password string `json:"password"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if strings.TrimSpace(body.Address) == "" {
+		http.Error(w, "address is required", http.StatusBadRequest)
+		return
+	}
+	if err := jukebox.VerifyMPD(r.Context(), body.Address, body.Password, 3*time.Second); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	_ = rest.RespondWithJSON(w, http.StatusOK, map[string]any{"status": "ok", "address": body.Address})
 }
 
 func (api *Router) jukeboxXiaomiQRInit(w http.ResponseWriter, r *http.Request) {

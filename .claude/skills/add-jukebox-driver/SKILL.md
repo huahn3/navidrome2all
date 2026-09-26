@@ -46,18 +46,33 @@ GetState() (*PlaybackState, error) // {Status, CurrentTime, Duration, VolumePerc
 `viper.SetDefault("jukebox.outputs", ...)` 附近保持一致；
 `[[Jukebox.Outputs]]` 是 TOML 表数组，**环境变量配不了**，只能 TOML 或网页管理页。
 
-## 4. 网页管理表单：`ui/src/jukebox/JukeboxOutputForm.jsx`
+## 4. 网页管理表单：`ui/src/jukebox/OutputEditorDialog.jsx`
 
-- `OUTPUT_TYPE_CHOICES` 加一项（`id` 必须与后端 `TypeXxx` 完全一致）
-- 新字段用 `<FormDataConsumer>` 包成"仅该类型可见"（照 xiaomi / mpd 两块写法）
+该目录已不是 react-admin 页，而是一套**三步向导**（`JukeboxOutputs.jsx` 卡片列表 +
+`OutputEditorDialog.jsx` 弹窗），路由 `/jukebox-outputs`。新增输出类型要动的地方：
+
+- `TYPES` 数组加一项（`id` 必须与后端 `TypeXxx` 完全一致），并给它图标、配色、一句话说明
+- **第 2 步（连接）里新增"仅该类型渲染"的字段块**：`values.type === 'xxx' && (...)`，
+  照 xiaomi / mpd 现有写法；别把该类型字段塞进步骤 1 或默认展开
+- 低频字段（token/did/model/账号/路径映射）放**第 3 步（高级）**，它默认折叠
 - 每个字段配 `helperText` 文案 key，不要写死英文
-- 该目录**只有 list / create / edit 三个页面，没有 show 页**——别顺手加
+- 卡片列表 `JukeboxOutputs.jsx` 的类型徽标映射也要加一项，否则新类型在列表里认不出来
+- 想让用户"填表之前就知道设备在哪"，照 `discover_mpd.go` 加一个扫描端点，
+  再在步骤 2 内嵌扫描按钮（见下面第 8 节的落点）
+- **弹窗容器加 `className="responsive-fields"`**，并按 `AGENTS.md` 第 9 节自检：
+  向导弹窗是窄屏溢出的高发区（Tab 行、chip 行、按钮行都会撑宽）
+- 如果新类型会"一次发现多台设备"，照 `XiaomiAuthBlock` 的做法给列表加勾选框 +
+  批量创建，不要让用户一台一台重复填表
 
-## 5. i18n：三份都要动
+## 5. i18n：三份都要动，而且要回读校验
 
 - `ui/src/i18n/en.json`：`resources.jukeboxOutput.types.xxx`、`.fields.*`、`.helpers.*`、`.messages.*`
 - `resources/i18n/zh-Hans.json`、`resources/i18n/zh-Hant.json`：后端文案与前端同名 key
 - 漏了会导致界面上显示成 key 字符串；`make test-i18n` 会校验翻译文件
+- **界面语言来自 `deepmerge(en, 服务端语言包)`**：`en.json` 里有同 key 就显示英文，
+  只在 JSX 里写 `_:` 回退是不够的。改完跑 `build-and-test` skill 里那条覆盖校验命令，
+  期望两行都是 `缺 0 条`
+- 插值用 polyglot 语法 `%{name}`，**不是** react-i18next 的 `{{name}}`（写错会原样显示）
 
 ## 6. 播放器能力分支：`ui/src/audioplayer/Player.jsx`
 
@@ -76,6 +91,20 @@ GetState() (*PlaybackState, error) // {Status, CurrentTime, Duration, VolumePerc
   HTTP 层错误映射测在 `server/nativeapi/jukebox_test.go`
 - 端到端：能加进 `contrib/jukebox-testing/` 就加个假设备桩，按 `jukebox-e2e` skill 跑一遍
 - 文档：`docs/jukebox.md` 的「字段速查」表、「配置教程」小节、"已知限制"、故障排查表
+
+## 8. 设备自动发现（可选，但体验提升很大）
+
+新类型若能靠"问网络"找到，强烈建议加上。照 `core/jukebox/discover_mpd.go` 的约束做：
+
+- 扫描**必须有硬边界**：私网 `/24`、并发上限、每地址超时、整体超时
+  （MPD 是 32 并发 / 400ms / 4s）。这是为了不让 `/discover` 变成能拖住请求的东西
+- 只走管理员路由（`server/nativeapi/jukebox_outputs.go` 里 `adminOnlyMiddleware`）
+- 尽量**顺带探测凭据**（MPD 会读 `password` 字段告诉用户"要不要密码、密码在哪一行"），
+  比只给一个地址有用得多
+- 再加一个"建配置前先试通"的校验端点（`/verify/mpd`），让用户当场看到密码对不对
+- 假服务端到端测：`core/jukebox/discover_mpd_test.go` 用回环 TCP 桩，
+  别真去扫局域网（测试环境会扫到别人的机器，也会很慢）
+- 文档：`docs/jukebox.md` 的配置教程开头 + `docs/jukebox-api.md` 的 3.6 节
 
 ## 验收
 

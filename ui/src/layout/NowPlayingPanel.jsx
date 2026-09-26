@@ -32,11 +32,16 @@ import * as jukebox from '../audioplayer/jukebox'
 const useStyles = makeStyles((theme) => ({
   button: { color: 'inherit' },
   list: {
+    // 手机上 26em（约 416px）比视口还宽，弹层右侧会被裁掉，所以再叠一层视口上限
     width: '26em',
+    maxWidth: 'calc(100vw - 16px)',
+    // 卡片实际高度随标题/音量的换行而变，写死 120px 会把最后一条切掉一半；
+    // 给出视口上限并保留滚动，任何条目都能完整看到
     maxHeight: (props) => {
       const entryHeight = 120
       const maxEntries = Math.min(props.entryCount || 0, 3)
-      return maxEntries > 0 ? `${maxEntries * entryHeight}px` : '12em'
+      const byCount = maxEntries > 0 ? `${maxEntries * entryHeight}px` : '12em'
+      return `min(${byCount}, 60vh)`
     },
     overflowY: 'auto',
     padding: 0,
@@ -583,6 +588,10 @@ const NowPlayingPanel = () => {
   const dispatch = useDispatch()
   const count = useSelector((state) => state.activity.nowPlayingCount)
   const lastUpdate = useSelector((state) => state.activity.nowPlayingLastUpdate)
+  // A takeover changes the list on every client, and it arrives as an SSE event
+  // rather than a nowPlayingCount broadcast.
+  const lastHandoff = useSelector((state) => state.player?.lastHandoff)
+  const sseDriven = !!config.devActivityPanel
   const streamReconnected = useSelector(
     (state) => state.activity.streamReconnected,
   )
@@ -799,30 +808,32 @@ const NowPlayingPanel = () => {
     if (serverUp) fetchList()
   }, [fetchList, serverUp, streamReconnected])
 
-  // Refresh immediately when NowPlaying updates from SSE events or panel is opened
+  // Refresh immediately when NowPlaying updates from SSE events, when another
+  // client takes a session over, or when the panel is opened
   useEffect(() => {
     if (open && serverUp) {
       if (doFetchRef.current) doFetchRef.current()
     }
-  }, [lastUpdate, open, serverUp])
+  }, [lastUpdate, lastHandoff, open, serverUp])
 
   // Update current time every second when open to animate progress bars
   useInterval(() => setNow(Date.now()), open ? 1000 : null)
 
-  // Periodic refresh when panel is open (10 seconds)
+  // The server broadcasts nowPlayingCount on every playback report, so with the
+  // event stream available the list is already fresh and does not need a 10s
+  // poll. Poll fast only when SSE is off (DevActivityPanel=false), and always
+  // keep a slow 60s net so a missed event cannot leave a stale badge.
   useInterval(
     () => {
-      if (open && serverUp) fetchList()
+      if (open && serverUp && !sseDriven) fetchList()
     },
-    open ? 10000 : null,
+    open && !sseDriven ? 10000 : null,
   )
-
-  // Periodic refresh when panel is closed (60 seconds) to keep badge accurate
   useInterval(
     () => {
-      if (!open && serverUp) fetchList()
+      if (serverUp) fetchList()
     },
-    !open ? 60000 : null,
+    serverUp ? 60000 : null,
   )
 
   return (

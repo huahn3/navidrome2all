@@ -189,10 +189,27 @@ Authorization: Bearer <token>
 ### 3.6 管理端设备发现与配置 (Admin Only)
 
 - `GET /api/jukebox/discover?timeout=3`：在局域网内进行 SSDP M-SEARCH 扫描，自动发现附近的 DLNA / UPnP 渲染器设备。
+- `GET /api/jukebox/discover/mpd?port=6600&timeout=4`：扫描本机所在私网 `/24` 的 MPD
+  （最多 32 并发、每地址 400ms，整体最长约 4s；扫不到属正常，手填地址即可）。
+  响应 `[{address, version, needsPassword, passwordLine}]`——`passwordLine` 是 `mpd.conf` 里
+  密码那一行，用于提示用户"密码取 `@` 前面的部分"。
+  ```json
+  [{"address":"192.168.31.88:6600","version":"0.21.11","needsPassword":true,
+    "passwordLine":"password \"secret@read,add,control\" @"}]
+  ```
+- `POST /api/jukebox/verify/mpd`：校验一个 MPD 地址（建配置前先试通，省得存完选不中）。
+  入参 `{"address":"host:port","password":"..."}`，成功返回
+  `{"ok":true,"version":"0.21.11","authenticated":true}`。
 - `GET /api/jukebox/outputs`：获取已持久化保存的所有自定义输出设备。
-- `POST /api/jukebox/outputs`：创建新的输出设备。
+- `POST /api/jukebox/outputs`：创建新的输出设备。`id` 必须 1-64 位 `[a-zA-Z0-9_-]`，留空则由
+  服务端按 `name` 生成（`Living Room MPD` → `living-room-mpd`；纯中文名 → `xiaomi-54hp`）。
 - `PUT /api/jukebox/outputs/{id}`：修改已有设备。
 - `DELETE /api/jukebox/outputs/{id}`：删除输出设备。
+
+> **凭据是脱敏往返的**：上面几个 `outputs` 接口返回的 `password` / `token` / 账号口令会被替换成
+> `SECRET_MASK`（`********`）。写回时若提交 `SECRET_MASK`，服务端理解为"沿用库里原值"。
+> 想真正改密码就提交新值，想保持不变就原样回传掩码——**不要把掩码当真值存回去**。
+> 若第三方客户端要自己实现配置页，请照这个语义实现，否则用户改一次密码就被抹成 `********`。
 
 ---
 

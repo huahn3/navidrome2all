@@ -76,7 +76,10 @@ func SaveStoredOutputs(ctx context.Context, ds model.DataStore, outputs []conf.J
 	if outputs == nil {
 		outputs = []conf.JukeboxOutputDevice{}
 	}
-	raw, err := json.Marshal(outputs)
+	// G117: the output records carry device tokens/passwords, so they land in the
+	// property table in plaintext — same exposure as the TOML config file. Tracked
+	// in docs/risk-notes-optimization.md §1; encrypt-at-rest is a separate change.
+	raw, err := json.Marshal(outputs) //nolint:gosec
 	if err != nil {
 		return err
 	}

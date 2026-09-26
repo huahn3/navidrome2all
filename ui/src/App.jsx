@@ -23,7 +23,6 @@ import share from './share'
 import library from './library'
 import plugin from './plugin'
 import { Player } from './audioplayer'
-import jukeboxOutput from './jukebox'
 import customRoutes from './routes'
 import {
   libraryReducer,
@@ -174,14 +173,6 @@ const Admin = (props) => {
             options={{ subMenu: 'settings' }}
           />
         ) : null,
-        permissions === 'admin' && config.jukeboxEnabled ? (
-          <Resource
-            name="jukeboxOutput"
-            {...jukeboxOutput}
-            options={{ subMenu: 'settings' }}
-          />
-        ) : null,
-
         <Resource name="translation" />,
         <Resource name="genre" />,
         <Resource name="tag" />,

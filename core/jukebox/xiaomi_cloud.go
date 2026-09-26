@@ -3,7 +3,7 @@ package jukebox
 import (
 	"crypto/md5" //nolint:gosec // Xiaomi login mandates an MD5 password hash
 	"crypto/rand"
-	"crypto/rc4"
+	"crypto/rc4"  //nolint:gosec // Xiaomi MIoT cloud protocol requires RC4
 	"crypto/sha1" //nolint:gosec // Xiaomi API mandates SHA1 request signatures
 	"crypto/sha256"
 	"encoding/base64"
@@ -23,7 +23,7 @@ import (
 
 // Xiaomi cloud endpoints (China region; other regions are not supported yet).
 const (
-	xiaomiPassportBase = "https://account.xiaomi.com"
+	xiaomiPassportBase = "https://account.xiaomi.com" //nolint:gosec // public endpoint, not a credential
 	xiaomiAPIBase      = "https://api.io.mi.com"
 	xiaomiSID          = "xiaomiio"
 )
@@ -173,7 +173,8 @@ func (c *xiaomiCloudClient) login() error {
 	if err != nil {
 		return err
 	}
-	resp, err := c.do(req)
+	// bodyclose: readPassportJSON closes the body itself.
+	resp, err := c.do(req) //nolint:bodyclose
 	if err != nil {
 		return err
 	}
@@ -203,7 +204,8 @@ func (c *xiaomiCloudClient) login() error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err = c.do(req)
+	// bodyclose: readPassportJSON closes the body itself.
+	resp, err = c.do(req) //nolint:bodyclose
 	if err != nil {
 		return err
 	}
@@ -252,7 +254,8 @@ func (c *xiaomiCloudClient) loginWithPassToken() error {
 	if c.passToken != "" {
 		c.cookies["passToken"] = c.passToken
 	}
-	resp, err := c.do(req)
+	// bodyclose: readPassportJSON closes the body itself.
+	resp, err := c.do(req) //nolint:bodyclose
 	if err != nil {
 		return err
 	}
@@ -342,7 +345,8 @@ func rc4Crypt(keyBase64 string, payload []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	cipher, err := rc4.NewCipher(key)
+	// RC4 is mandated by Xiaomi's MIoT cloud protocol (ENCRYPT-RC4); no stronger option exists.
+	cipher, err := rc4.NewCipher(key) //nolint:gosec
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +426,8 @@ func (c *xiaomiCloudClient) rpc(uri, data string) (json.RawMessage, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("x-xiaomi-protocal-flag-cli", "PROTOCAL-HTTP2")
+	// The header name below is misspelled in Xiaomi's own protocol; keep it verbatim.
+	req.Header.Set("x-xiaomi-protocal-flag-cli", "PROTOCAL-HTTP2") //nolint:misspell
 	req.Header.Set("MIOT-ENCRYPT-ALGORITHM", "ENCRYPT-RC4")
 	req.Header.Set("User-Agent", "APP/com.xiaomi.mihome APPV/10.5.201")
 
@@ -567,7 +572,8 @@ func StartQRLogin() (*XiaomiQRLoginInfo, error) {
 		ts,
 	)
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(u)
+	// bodyclose: readPassportJSON closes the body itself.
+	resp, err := client.Get(u) //nolint:bodyclose
 	if err != nil {
 		return nil, err
 	}
@@ -593,7 +599,8 @@ func StartQRLogin() (*XiaomiQRLoginInfo, error) {
 // PollQRLogin polls the long-polling URL waiting for user scan & confirmation in Mi Home app.
 func PollQRLogin(lpURL string) (*xiaomiCloudClient, string, error) {
 	client := &http.Client{Timeout: 25 * time.Second}
-	resp, err := client.Get(lpURL)
+	// bodyclose: readPassportJSON closes the body itself.
+	resp, err := client.Get(lpURL) //nolint:bodyclose
 	if err != nil {
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
@@ -665,10 +672,12 @@ func (c *xiaomiCloudClient) loginMina() error {
 	if err != nil {
 		return err
 	}
-	req.AddCookie(&http.Cookie{Name: "userId", Value: c.userID})
-	req.AddCookie(&http.Cookie{Name: "passToken", Value: c.passToken})
-	req.AddCookie(&http.Cookie{Name: "deviceId", Value: "D84D9205859533D5"})
-	req.AddCookie(&http.Cookie{Name: "sdkVersion", Value: "3.9"})
+	// G124: these are outbound cookies for Xiaomi's HTTPS API; Secure/HttpOnly
+	// only apply to cookies a browser stores, and this client never stores them.
+	req.AddCookie(&http.Cookie{Name: "userId", Value: c.userID})             //nolint:gosec
+	req.AddCookie(&http.Cookie{Name: "passToken", Value: c.passToken})       //nolint:gosec
+	req.AddCookie(&http.Cookie{Name: "deviceId", Value: "D84D9205859533D5"}) //nolint:gosec // see above
+	req.AddCookie(&http.Cookie{Name: "sdkVersion", Value: "3.9"})            //nolint:gosec // see above
 	req.Header.Set("User-Agent", "APP/com.xiaomi.mihome APPV/11.3.203 iosPassportSDK/4.2.50 iOS/26.3.1 MK/aVBob25lMTcsMg== DEVT/aVBob25l DEVS/aU9T BRA/QXBwbGU= L/zh_CN")
 
 	resp, err := c.http.Do(req)
@@ -755,8 +764,8 @@ func (c *xiaomiCloudClient) fetchMinaDevices() error {
 		return err
 	}
 	req.Header.Set("User-Agent", "MiHome/6.0.103 (com.xiaomi.mihome; build:6.0.103.1; iOS 14.4.0) Alamofire/6.0.103 MICO/iOSApp/appStore/6.0.103")
-	req.AddCookie(&http.Cookie{Name: "userId", Value: c.userID})
-	req.AddCookie(&http.Cookie{Name: "serviceToken", Value: c.minaServiceToken})
+	req.AddCookie(&http.Cookie{Name: "userId", Value: c.userID})                 //nolint:gosec // outbound API cookie, see above
+	req.AddCookie(&http.Cookie{Name: "serviceToken", Value: c.minaServiceToken}) //nolint:gosec // outbound API cookie, see above
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -842,8 +851,8 @@ func (c *xiaomiCloudClient) minaUbusCall(minaDeviceID, path, method, message str
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("User-Agent", "MiHome/6.0.103 (com.xiaomi.mihome; build:6.0.103.1; iOS 14.4.0) Alamofire/6.0.103 MICO/iOSApp/appStore/6.0.103")
-		req.AddCookie(&http.Cookie{Name: "userId", Value: c.userID})
-		req.AddCookie(&http.Cookie{Name: "serviceToken", Value: c.minaServiceToken})
+		req.AddCookie(&http.Cookie{Name: "userId", Value: c.userID})                 //nolint:gosec // outbound API cookie, see above
+		req.AddCookie(&http.Cookie{Name: "serviceToken", Value: c.minaServiceToken}) //nolint:gosec // outbound API cookie, see above
 		return c.http.Do(req)
 	}
 

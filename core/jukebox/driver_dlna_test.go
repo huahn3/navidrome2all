@@ -69,7 +69,7 @@ func newFakeDLNA() *fakeDLNA {
 			return
 		}
 		w.Header().Set("Content-Type", "text/xml")
-		_, _ = fmt.Fprint(w, soapResponseXML(action, state, rel, dur, vol))
+		_, _ = fmt.Fprint(w, soapResponseXML(action, state, rel, dur, vol)) //nolint:gosec // test fixture echoes its own inputs
 	}
 	mux.HandleFunc("/upnp/control/AVTransport", soapHandler)
 	mux.HandleFunc("/upnp/control/RenderingControl", soapHandler)
@@ -286,7 +286,8 @@ var _ = Describe("DLNA driver", func() {
 			Expect(seek.action).To(Equal("Seek"))
 			Expect(seek.body).To(ContainSubstring("<Unit>REL_TIME</Unit>"))
 			Expect(seek.body).To(ContainSubstring("<Target>00:01:02</Target>"))
-			Expect(fake.countAction("Seek")).To(Equal(1))
+			// Verification is asynchronous, so a honoured seek must not be repeated.
+			Consistently(func() int { return fake.countAction("Seek") }).Should(Equal(1))
 		})
 
 		// Renderers answer 200 and keep playing when the Seek arrives too early.
@@ -294,13 +295,27 @@ var _ = Describe("DLNA driver", func() {
 			fake.set("PLAYING", "0:00:30", "0:03:00", "10")
 			fake.setHonourSeek(false)
 			Expect(driver.Seek(62)).To(Succeed())
-			Expect(fake.countAction("Seek")).To(Equal(dlnaSeekAttempts))
+			// The retries run in the background, after Seek has already returned.
+			Eventually(func() int { return fake.countAction("Seek") }).Should(Equal(dlnaSeekAttempts))
+		})
+
+		It("abandons a pending seek verification when the transport moves on", func() {
+			fake.set("PLAYING", "0:00:30", "0:03:00", "10")
+			fake.setHonourSeek(false)
+			Expect(driver.Seek(62)).To(Succeed())
+			// A track change must stop the old verification, or the renderer would
+			// be dragged back to the position of the previous track.
+			Expect(driver.Stop()).To(Succeed())
+			time.Sleep(50 * time.Millisecond)
+			before := fake.countAction("Seek")
+			time.Sleep(100 * time.Millisecond)
+			Expect(fake.countAction("Seek")).To(Equal(before))
 		})
 
 		It("seeks once without verifying when the renderer reports no position", func() {
 			fake.set("PLAYING", "0:00:00", "0:00:00", "10")
 			Expect(driver.Seek(62)).To(Succeed())
-			Expect(fake.countAction("Seek")).To(Equal(1))
+			Eventually(func() int { return fake.countAction("Seek") }).Should(Equal(1))
 		})
 
 		It("sets the volume through RenderingControl", func() {

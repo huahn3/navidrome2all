@@ -210,6 +210,14 @@ func (m *manager) Select(deviceID string) error {
 		return fmt.Errorf("unknown jukebox device: %s", deviceID)
 	}
 
+	// Already on this output: keep the live driver. Rebuilding it would drop the
+	// device session (a Xiaomi speaker has to redo its handshake) and log a
+	// misleading "switched" line, while callers legitimately re-assert the
+	// selection before every command.
+	if m.selected == deviceID && m.driver != nil {
+		return nil
+	}
+
 	// Best effort stop of the previously selected remote device
 	if m.driver != nil && m.selected != deviceID {
 		if err := m.driver.Stop(); err != nil {

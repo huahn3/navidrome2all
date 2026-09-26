@@ -32,6 +32,42 @@ description: 用 contrib/jukebox-testing 的假 MPD/DLNA 服务器对多输出�
 
    顺序：select → play → status 轮询 → seek → **volume（双向）** → pause → 切回 browser
 
+### 输出配置（建设备）也要验
+
+改输出控制台或 `outputs_store` 后，把这条链路跑一遍——它是纯 curl 的，很快：
+
+```bash
+T=$(curl -s -X POST http://localhost:4533/auth/login -H 'Content-Type: application/json' \
+   -d '{"username":"<用户>","password":"<用户自己给的>"}' | sed -E 's/.*"token":"([^"]+)".*/\1/')
+H="X-ND-Authorization: Bearer $T"
+
+# 1. 扫描与校验（MPD；DLNA 用 /discover?timeout=3）
+curl -s -H "$H" 'http://localhost:4533/api/jukebox/discover/mpd?timeout=4'
+curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
+     -d '{"address":"127.0.0.1:16600","password":""}' \
+     http://localhost:4533/api/jukebox/verify/mpd
+
+# 2. 建设备（id 留空 → 服务端按 name 生成）
+curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
+     -d '{"id":"","name":"E2E MPD","type":"mpd","address":"127.0.0.1:16600"}' \
+     http://localhost:4533/api/jukebox/outputs
+
+# 3. 凭据脱敏往返：GET 必须返回 ********，回传掩码必须保留原值
+curl -s -H "$H" http://localhost:4533/api/jukebox/outputs
+```
+
+断言：GET 里 `password` 是 `********`；把它原样 `PUT` 回去后再 GET，**仍然是
+`********` 而不是 `********` 字面量入库**（去 DB 里确认原密码还在）。
+漏测这一条就会把用户密码抹成掩码。
+
+批量添加（小爱音箱多选）没法在 curl 层验，走界面：扫码登录后列表里勾选多台 →
+「添加所选 N 台为输出设备」→ 断言：
+
+- 每台生成**独立输出**（各自的 token/did/型号），而不是覆盖同一个
+- 型号相同的两台也能建成（ID 会自动加 `-2` 后缀，服务端对重复 ID 直接 400）
+- 没有局域网 IP 的设备**不可勾选**
+- 部分失败时弹窗**不关闭**并列出失败设备与原因；全成功才关闭并刷新列表
+
 ## 断言点
 
 **协议层（假设备日志）**

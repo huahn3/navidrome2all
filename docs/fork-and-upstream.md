@@ -60,7 +60,11 @@ contrib/jukebox-testing/         假 MPD / 假 DLNA 测试桩
 | `server/nativeapi/native_api.go` | 挂载 jukebox 路由、启动时用 DB 输出喂给 DeviceManager |
 | `server/subsonic/api.go` | 注册 `/rest/stream/{id}{.ext}` 别名路由 |
 | `server/subsonic/stream.go` | 抽出可复用的流处理，供别名端点调用 |
-| `ui/src/App.jsx` | 注册 `jukeboxOutput` 资源（admin + `jukeboxEnabled` 才出现） |
+| `ui/src/App.jsx` | 早期注册过 `jukeboxOutput` 资源，**现已移除**（改自定义控制台，见 `ui/src/jukebox/`） |
+| `ui/src/jukebox/` | 输出设备控制台（卡片列表 + 三步向导弹窗），路由 `/jukebox-outputs`，`jukeboxEnabled` 才注册 |
+| `ui/src/lyricsTranslation/LyricsTranslation.jsx` | 歌词翻译管理页（响应式栅格 + 全部文案走 i18n 字面量映射） |
+| `ui/src/index.css` | `.responsive-fields`：窄屏防溢出（输入控件可缩、表格 `contain: inline-size`） |
+| `ui/src/routes.jsx`、`ui/src/layout/AppBar.jsx` | 懒加载路由、侧边栏菜单项 |
 | `ui/src/audioplayer/Player.jsx` | 音量三规则、设备切换、静音时钟与进度校准 |
 | `ui/src/audioplayer/PlayerToolbar.jsx` | 装配 `DeviceSelector` / `VolumeControl` |
 | `ui/src/audioplayer/keyHandlers.jsx` | 键盘音量改走 store |
@@ -69,10 +73,12 @@ contrib/jukebox-testing/         假 MPD / 假 DLNA 测试桩
 | `ui/src/reducers/playerReducer.js` | `outputDevice` 状态、清队列时保留设备选择 |
 | `ui/src/store/createAdminStore.js` | 持久化白名单加 `outputDevice`、音量 0 兜底 |
 | `ui/src/config.js` | `jukeboxEnabled` / `defaultUIVolume` |
-| `ui/src/dataProvider/wrapperDataProvider.js` | 输出设备的 REST 适配 |
-| `ui/src/i18n/en.json`、`resources/i18n/zh-Hans.json`、`zh-Hant.json` | `jukebox.*` 与 `resources.jukeboxOutput.*` 文案 |
+| ~~`ui/src/dataProvider/wrapperDataProvider.js`~~ | 曾做输出设备的 REST 适配；控制台改自定义页面后**该映射与用例已删除** |
+| `ui/src/i18n/en.json`、`resources/i18n/zh-Hans.json`、`zh-Hant.json` | `jukebox.*` 与 `resources.jukeboxOutput.*` 文案。**界面语言由 `ui/src/i18n/provider.js` 的 `deepmerge(en, 服务端语言包)` 决定**：中文必须同时写进三份文件，只写代码里的 `_:` 回退不够 |
 | `ui/vite.config.js` | 开发模式注入 `__APP_CONFIG__`（否则本地跑不出真实配置） |
-| `server/serve_index_test.go`、`ui/src/audioplayer/PlayerToolbar.test.jsx`、`ui/src/reducers/playerReducer.test.js`、`ui/src/dataProvider/wrapperDataProvider.test.js` | 上述改动的用例 |
+| `server/serve_index_test.go`、`ui/src/audioplayer/PlayerToolbar.test.jsx`、`ui/src/reducers/playerReducer.test.js` | 上述改动的用例（`wrapperDataProvider.test.js` 随映射一起删除） |
+| `scripts/validate-translations.sh` | 从 `.github/workflows/` 迁到 `scripts/`（删 workflows 时被误删，导致 `make test-i18n` 一直失败） |
+| `scripts/check-i18n-keys.py` | 校验"源码引用了但语言包里没有"的 key（`make test-i18n` 查不出这一类） |
 | `README.md`、`go.mod`、`go.sum` | 说明与依赖 |
 | `.gitignore` | 移除 `AGENTS.md` 的忽略（本 fork 要跟踪它）；新增**根目录限定**的 `/artwork/` |
 

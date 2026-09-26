@@ -88,18 +88,6 @@ describe('wrapperDataProvider', () => {
     })
   })
 
-  describe('jukeboxOutput', () => {
-    it('maps the resource to the /jukebox/outputs endpoint', () => {
-      mockProvider.getOne.mockResolvedValue({ data: { id: 'xiaoai' } })
-
-      wrapperDataProvider.getOne('jukeboxOutput', { id: 'xiaoai' })
-
-      expect(mockProvider.getOne).toHaveBeenCalledWith('jukebox/outputs', {
-        id: 'xiaoai',
-      })
-    })
-  })
-
   describe('refreshMetadata', () => {
     it('posts to the album metadata refresh endpoint', () => {
       mockHttpClient.mockResolvedValue({ json: {} })

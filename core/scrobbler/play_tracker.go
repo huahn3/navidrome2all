@@ -3,6 +3,7 @@ package scrobbler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"sync"
@@ -281,6 +282,12 @@ func remainingTTL(durationSec float32, positionMs int64, rate float64) time.Dura
 	return time.Duration(remainingSec+5) * time.Second
 }
 
+// errOutOfOrderReport marks a report that a branch deliberately ignored. It must
+// abort the whole ReportPlayback (not just the branch), so that the NowPlaying
+// broadcast and count update below are skipped too — hence a sentinel instead of
+// a plain nil return from the per-state helpers.
+var errOutOfOrderReport = errors.New("out-of-order playback report")
+
 func (p *playTracker) ReportPlayback(ctx context.Context, params ReportPlaybackParams) error {
 	player, _ := request.PlayerFrom(ctx)
 	user, _ := request.UserFrom(ctx)
@@ -292,181 +299,20 @@ func (p *playTracker) ReportPlayback(ctx context.Context, params ReportPlaybackP
 	// One verdict per report, reused by every dispatch below, so a filter reading
 	// annotations cannot decide differently on either side of incPlay.
 	var filtered bool
-
+	var err error
 	switch params.State {
 	case StateStarting:
-		// Clients may send starting/playing unordered; a late "starting" must not downgrade
-		// a playing session, or position estimation freezes until the next report.
-		if p.hasPlayingSession(clientId, params.MediaId) {
-			log.Trace(ctx, "Ignoring out-of-order starting report for playing session", "clientId", clientId, "mediaId", params.MediaId)
-			return nil
-		}
-		mf, err := p.ds.MediaFile(ctx).GetWithParticipants(params.MediaId)
-		if err != nil {
-			return err
-		}
-		filtered = p.isFilteredOut(ctx, mf)
-		outDev := params.OutputDevice
-		if outDev == "" {
-			outDev = "browser"
-		}
-		vol := params.Volume
-		if vol == 0 {
-			vol = 100
-		}
-		info := PlaybackSession{
-			MediaFile:    *mf,
-			filtered:     filtered,
-			Start:        now,
-			UserId:       user.ID,
-			Username:     user.UserName,
-			PlayerId:     clientId,
-			PlayerName:   client,
-			State:        params.State,
-			PositionMs:   params.PositionMs,
-			PlaybackRate: params.PlaybackRate,
-			LastReport:   now,
-			OutputDevice: outDev,
-			Volume:       vol,
-			PlayMode:     params.PlayMode,
-			Bilingual:    params.Bilingual,
-		}
-		p.sessionsMu.Lock()
-		// re-check: a concurrent "playing" report may have created the session during the load above
-		if p.hasPlayingSession(clientId, params.MediaId) {
-			p.sessionsMu.Unlock()
-			log.Trace(ctx, "Ignoring out-of-order starting report for playing session", "clientId", clientId, "mediaId", params.MediaId)
-			return nil
-		}
-		err = p.playMap.AddWithTTL(clientId, info, remainingTTL(mf.Duration, params.PositionMs, params.PlaybackRate))
-		p.sessionsMu.Unlock()
-		if err != nil {
-			log.Warn(ctx, "Error adding PlaybackSession to cache", "clientId", clientId, "mediaId", params.MediaId, "state", params.State, err)
-		}
-		p.enqueuePlaybackReport(ctx, info, filtered)
-
+		filtered, err = p.reportStarting(ctx, params, clientId, client, user, now)
 	case StatePlaying, StatePaused:
-		info, getErr := p.playMap.Get(clientId)
-		if getErr != nil || info.MediaFile.ID != params.MediaId {
-			mf, err := p.ds.MediaFile(ctx).GetWithParticipants(params.MediaId)
-			if err != nil {
-				return err
-			}
-			info = PlaybackSession{
-				MediaFile:  *mf,
-				Start:      now.Add(-time.Duration(params.PositionMs) * time.Millisecond),
-				UserId:     user.ID,
-				Username:   user.UserName,
-				PlayerId:   clientId,
-				PlayerName: client,
-			}
-		}
-		info.State = params.State
-		info.PositionMs = params.PositionMs
-		info.PlaybackRate = params.PlaybackRate
-		info.LastReport = now
-		if params.OutputDevice != "" {
-			info.OutputDevice = params.OutputDevice
-		} else if info.OutputDevice == "" {
-			info.OutputDevice = "browser"
-		}
-		if params.Volume > 0 {
-			info.Volume = params.Volume
-		} else if info.Volume == 0 {
-			info.Volume = 100
-		}
-		if params.PlayMode != "" {
-			info.PlayMode = params.PlayMode
-		}
-		info.Bilingual = params.Bilingual
-		filtered = p.isFilteredOut(ctx, &info.MediaFile)
-		info.filtered = filtered
-		ttl := 30 * time.Minute
-		if params.State == StatePlaying {
-			ttl = remainingTTL(info.MediaFile.Duration, params.PositionMs, params.PlaybackRate)
-		}
-		log.Trace(ctx, "Updating PlaybackSession in cache", "clientId", clientId, "mediaId", params.MediaId, "state", params.State, "positionMs", params.PositionMs, "playbackRate", params.PlaybackRate, "ttl", ttl)
-		p.sessionsMu.Lock()
-		err := p.playMap.AddWithTTL(clientId, info, ttl)
-		p.sessionsMu.Unlock()
-		if err != nil {
-			log.Warn(ctx, "Error updating PlaybackSession in cache", "clientId", clientId, "mediaId", params.MediaId, "state", params.State, err)
-		}
-		p.enqueuePlaybackReport(ctx, info, filtered)
-
+		filtered, err = p.reportPlayingOrPaused(ctx, params, clientId, client, user, now)
 	case StateStopped:
-		var loadedMF *model.MediaFile
-		haveVerdict := false
-		if !params.IgnoreScrobble && player.ScrobbleEnabled {
-			mf, err := p.ds.MediaFile(ctx).GetWithParticipants(params.MediaId)
-			if err != nil {
-				return err
-			}
-			loadedMF = mf
-			filtered = p.isFilteredOut(ctx, mf)
-			haveVerdict = true
-			trackDurationMs := int64(mf.Duration * 1000)
-			threshold := min(trackDurationMs*50/100, 240_000)
-			if params.PositionMs >= threshold {
-				err = p.incPlay(ctx, mf, now)
-				if err != nil {
-					log.Warn(ctx, "Error updating play counts", "id", mf.ID, "track", mf.Title, "user", user.UserName, err)
-				}
-				p.dispatchScrobble(ctx, mf, now, filtered)
-			}
-		}
-		p.sessionsMu.Lock()
-		info, getErr := p.playMap.Get(clientId)
-		// A late stop for a previous track must not end the current session nor reach
-		// playback reporters, or presence-style plugins would clear the active track.
-		if getErr == nil && info.MediaFile.ID != params.MediaId {
-			p.sessionsMu.Unlock()
-			log.Trace(ctx, "Ignoring out-of-order stopped report for different track", "clientId", clientId, "stoppedMediaId", params.MediaId, "currentMediaId", info.MediaFile.ID)
+		filtered, err = p.reportStopped(ctx, params, clientId, client, user, now, player)
+	}
+	if err != nil {
+		if errors.Is(err, errOutOfOrderReport) {
 			return nil
 		}
-		p.playMap.Remove(clientId)
-		p.sessionsMu.Unlock()
-		stoppedInfo := PlaybackSession{
-			UserId:       user.ID,
-			Username:     user.UserName,
-			PlayerId:     clientId,
-			PlayerName:   client,
-			State:        params.State,
-			PositionMs:   params.PositionMs,
-			PlaybackRate: params.PlaybackRate,
-			LastReport:   now,
-			OutputDevice: params.OutputDevice,
-			Volume:       params.Volume,
-			PlayMode:     params.PlayMode,
-			Bilingual:    params.Bilingual,
-		}
-		if getErr == nil {
-			stoppedInfo.MediaFile = info.MediaFile
-			stoppedInfo.Start = info.Start
-			if stoppedInfo.OutputDevice == "" {
-				stoppedInfo.OutputDevice = info.OutputDevice
-			}
-			if stoppedInfo.Volume == 0 {
-				stoppedInfo.Volume = info.Volume
-			}
-			if stoppedInfo.PlayMode == "" {
-				stoppedInfo.PlayMode = info.PlayMode
-			}
-		} else {
-			mf := loadedMF
-			if mf == nil {
-				var mfErr error
-				mf, mfErr = p.ds.MediaFile(ctx).GetWithParticipants(params.MediaId)
-				if mfErr != nil {
-					return mfErr
-				}
-			}
-			stoppedInfo.MediaFile = *mf
-		}
-		if !haveVerdict {
-			filtered = p.isFilteredOut(ctx, &stoppedInfo.MediaFile)
-		}
-		p.enqueuePlaybackReport(ctx, stoppedInfo, filtered)
+		return err
 	}
 
 	if conf.Server.EnableNowPlaying {
@@ -633,4 +479,194 @@ func Register(name string, init Constructor) {
 func IsBuiltinScrobbler(name string) bool {
 	_, ok := constructors[name]
 	return ok
+}
+
+// reportStarting creates a session for a track that has just begun. A late
+// "starting" must not downgrade a playing session, or position estimation would
+// freeze until the next report.
+func (p *playTracker) reportStarting(ctx context.Context, params ReportPlaybackParams, clientId, client string, user model.User, now time.Time) (bool, error) {
+	var filtered bool
+	// Clients may send starting/playing unordered; a late "starting" must not downgrade
+	// a playing session, or position estimation freezes until the next report.
+	if p.hasPlayingSession(clientId, params.MediaId) {
+		log.Trace(ctx, "Ignoring out-of-order starting report for playing session", "clientId", clientId, "mediaId", params.MediaId)
+		return false, errOutOfOrderReport
+	}
+	mf, err := p.ds.MediaFile(ctx).GetWithParticipants(params.MediaId)
+	if err != nil {
+		return filtered, err
+	}
+	filtered = p.isFilteredOut(ctx, mf)
+	outDev := params.OutputDevice
+	if outDev == "" {
+		outDev = "browser"
+	}
+	vol := params.Volume
+	if vol == 0 {
+		vol = 100
+	}
+	info := PlaybackSession{
+		MediaFile:    *mf,
+		filtered:     filtered,
+		Start:        now,
+		UserId:       user.ID,
+		Username:     user.UserName,
+		PlayerId:     clientId,
+		PlayerName:   client,
+		State:        params.State,
+		PositionMs:   params.PositionMs,
+		PlaybackRate: params.PlaybackRate,
+		LastReport:   now,
+		OutputDevice: outDev,
+		Volume:       vol,
+		PlayMode:     params.PlayMode,
+		Bilingual:    params.Bilingual,
+	}
+	p.sessionsMu.Lock()
+	// re-check: a concurrent "playing" report may have created the session during the load above
+	if p.hasPlayingSession(clientId, params.MediaId) {
+		p.sessionsMu.Unlock()
+		log.Trace(ctx, "Ignoring out-of-order starting report for playing session", "clientId", clientId, "mediaId", params.MediaId)
+		return false, errOutOfOrderReport
+	}
+	err = p.playMap.AddWithTTL(clientId, info, remainingTTL(mf.Duration, params.PositionMs, params.PlaybackRate))
+	p.sessionsMu.Unlock()
+	if err != nil {
+		log.Warn(ctx, "Error adding PlaybackSession to cache", "clientId", clientId, "mediaId", params.MediaId, "state", params.State, err)
+	}
+	p.enqueuePlaybackReport(ctx, info, filtered)
+	return filtered, nil
+}
+
+// reportPlayingOrPaused refreshes an existing session, creating one when this
+// report is the first the client ever sent for this track.
+func (p *playTracker) reportPlayingOrPaused(ctx context.Context, params ReportPlaybackParams, clientId, client string, user model.User, now time.Time) (bool, error) {
+	var filtered bool
+	info, getErr := p.playMap.Get(clientId)
+	if getErr != nil || info.MediaFile.ID != params.MediaId {
+		mf, err := p.ds.MediaFile(ctx).GetWithParticipants(params.MediaId)
+		if err != nil {
+			return filtered, err
+		}
+		info = PlaybackSession{
+			MediaFile:  *mf,
+			Start:      now.Add(-time.Duration(params.PositionMs) * time.Millisecond),
+			UserId:     user.ID,
+			Username:   user.UserName,
+			PlayerId:   clientId,
+			PlayerName: client,
+		}
+	}
+	info.State = params.State
+	info.PositionMs = params.PositionMs
+	info.PlaybackRate = params.PlaybackRate
+	info.LastReport = now
+	if params.OutputDevice != "" {
+		info.OutputDevice = params.OutputDevice
+	} else if info.OutputDevice == "" {
+		info.OutputDevice = "browser"
+	}
+	if params.Volume > 0 {
+		info.Volume = params.Volume
+	} else if info.Volume == 0 {
+		info.Volume = 100
+	}
+	if params.PlayMode != "" {
+		info.PlayMode = params.PlayMode
+	}
+	info.Bilingual = params.Bilingual
+	filtered = p.isFilteredOut(ctx, &info.MediaFile)
+	info.filtered = filtered
+	ttl := 30 * time.Minute
+	if params.State == StatePlaying {
+		ttl = remainingTTL(info.MediaFile.Duration, params.PositionMs, params.PlaybackRate)
+	}
+	log.Trace(ctx, "Updating PlaybackSession in cache", "clientId", clientId, "mediaId", params.MediaId, "state", params.State, "positionMs", params.PositionMs, "playbackRate", params.PlaybackRate, "ttl", ttl)
+	p.sessionsMu.Lock()
+	err := p.playMap.AddWithTTL(clientId, info, ttl)
+	p.sessionsMu.Unlock()
+	if err != nil {
+		log.Warn(ctx, "Error updating PlaybackSession in cache", "clientId", clientId, "mediaId", params.MediaId, "state", params.State, err)
+	}
+	p.enqueuePlaybackReport(ctx, info, filtered)
+	return filtered, nil
+}
+
+// reportStopped ends a session and, when the play threshold was reached,
+// counts the play and dispatches the scrobble.
+func (p *playTracker) reportStopped(ctx context.Context, params ReportPlaybackParams, clientId, client string, user model.User, now time.Time, player model.Player) (bool, error) {
+	var filtered bool
+	var loadedMF *model.MediaFile
+	haveVerdict := false
+	if !params.IgnoreScrobble && player.ScrobbleEnabled {
+		mf, err := p.ds.MediaFile(ctx).GetWithParticipants(params.MediaId)
+		if err != nil {
+			return filtered, err
+		}
+		loadedMF = mf
+		filtered = p.isFilteredOut(ctx, mf)
+		haveVerdict = true
+		trackDurationMs := int64(mf.Duration * 1000)
+		threshold := min(trackDurationMs*50/100, 240_000)
+		if params.PositionMs >= threshold {
+			err = p.incPlay(ctx, mf, now)
+			if err != nil {
+				log.Warn(ctx, "Error updating play counts", "id", mf.ID, "track", mf.Title, "user", user.UserName, err)
+			}
+			p.dispatchScrobble(ctx, mf, now, filtered)
+		}
+	}
+	p.sessionsMu.Lock()
+	info, getErr := p.playMap.Get(clientId)
+	// A late stop for a previous track must not end the current session nor reach
+	// playback reporters, or presence-style plugins would clear the active track.
+	if getErr == nil && info.MediaFile.ID != params.MediaId {
+		p.sessionsMu.Unlock()
+		log.Trace(ctx, "Ignoring out-of-order stopped report for different track", "clientId", clientId, "stoppedMediaId", params.MediaId, "currentMediaId", info.MediaFile.ID)
+		return false, nil
+	}
+	p.playMap.Remove(clientId)
+	p.sessionsMu.Unlock()
+	stoppedInfo := PlaybackSession{
+		UserId:       user.ID,
+		Username:     user.UserName,
+		PlayerId:     clientId,
+		PlayerName:   client,
+		State:        params.State,
+		PositionMs:   params.PositionMs,
+		PlaybackRate: params.PlaybackRate,
+		LastReport:   now,
+		OutputDevice: params.OutputDevice,
+		Volume:       params.Volume,
+		PlayMode:     params.PlayMode,
+		Bilingual:    params.Bilingual,
+	}
+	if getErr == nil {
+		stoppedInfo.MediaFile = info.MediaFile
+		stoppedInfo.Start = info.Start
+		if stoppedInfo.OutputDevice == "" {
+			stoppedInfo.OutputDevice = info.OutputDevice
+		}
+		if stoppedInfo.Volume == 0 {
+			stoppedInfo.Volume = info.Volume
+		}
+		if stoppedInfo.PlayMode == "" {
+			stoppedInfo.PlayMode = info.PlayMode
+		}
+	} else {
+		mf := loadedMF
+		if mf == nil {
+			var mfErr error
+			mf, mfErr = p.ds.MediaFile(ctx).GetWithParticipants(params.MediaId)
+			if mfErr != nil {
+				return filtered, mfErr
+			}
+		}
+		stoppedInfo.MediaFile = *mf
+	}
+	if !haveVerdict {
+		filtered = p.isFilteredOut(ctx, &stoppedInfo.MediaFile)
+	}
+	p.enqueuePlaybackReport(ctx, stoppedInfo, filtered)
+	return filtered, nil
 }

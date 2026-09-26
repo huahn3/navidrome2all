@@ -33,6 +33,12 @@ import PlayerToolbar from './PlayerToolbar'
 import * as jukebox from './jukebox'
 import { sendNotification } from '../utils'
 import httpClient, { clientUniqueId } from '../dataProvider/httpClient'
+import {
+  VOLUME_EPSILON,
+  devicePercentToPerceived,
+  perceivedToDevicePercent,
+  perceivedToElementVolume,
+} from './volume'
 import subsonic from '../subsonic'
 import locale from './locale'
 import { keyMap } from '../hotkeys'
@@ -332,13 +338,13 @@ const Player = () => {
   // volume query, and adopting that would silence the UI and get persisted.
   const adoptDeviceVolume = useCallback(
     (percent) => {
-      if (typeof percent !== 'number' || percent <= 0 || percent > 100) {
+      const volume = devicePercentToPerceived(percent)
+      if (volume == null) {
         return
       }
       lastVolumeSentRef.current = percent
-      const volume = percent / 100
       const stored = playerStateRef.current?.volume
-      if (stored == null || Math.abs(stored - volume) > 0.005) {
+      if (stored == null || Math.abs(stored - volume) > VOLUME_EPSILON) {
         dispatch(setVolume(volume))
       }
     },
@@ -363,9 +369,8 @@ const Player = () => {
       return
     }
     const applyToElement = () => {
-      const volume = Math.min(1, Math.max(0, playerState.volume))
-      const elementVolume = volume * volume
-      if (Math.abs(audioInstance.volume - elementVolume) > 0.005) {
+      const elementVolume = perceivedToElementVolume(playerState.volume)
+      if (Math.abs(audioInstance.volume - elementVolume) > VOLUME_EPSILON) {
         audioInstance.volume = elementVolume
       }
     }
@@ -380,8 +385,7 @@ const Player = () => {
     if (!remoteActive) {
       return
     }
-    const volume = Math.min(1, Math.max(0, playerState.volume))
-    const percent = Math.round(volume * 100)
+    const percent = perceivedToDevicePercent(playerState.volume)
     if (percent === lastVolumeSentRef.current) {
       return
     }

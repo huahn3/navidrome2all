@@ -55,9 +55,6 @@ const applyLibraryFilter = (resource, params) => {
 
 const mapResource = (resource, params) => {
   switch (resource) {
-    // jukeboxOutput is backed by /api/jukebox/outputs, not /api/jukeboxOutput
-    case 'jukeboxOutput':
-      return ['jukebox/outputs', params]
     // /api/playlistTrack?playlist_id=123  => /api/playlist/123/tracks
     case 'playlistTrack': {
       params.filter = params.filter || {}

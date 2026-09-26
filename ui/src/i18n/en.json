@@ -221,7 +221,9 @@
         "account": "Xiaomi account",
         "passToken": "passToken credential",
         "textDirective": "Text directive",
-        "source": "Source"
+        "source": "Source",
+        "accountPassword": "Xiaomi account password",
+        "mpdPassword": "MPD password"
       },
       "types": {
         "xiaomi": "Xiaomi / XiaoAI speaker",
@@ -235,23 +237,100 @@
         "did": "Optional miIO device ID, detected automatically when empty.",
         "model": "Optional speaker model, e.g. l7a, s12, l05b; selects the playback parameters.",
         "account": "Xiaomi user ID or account (phone/email/ID), used for cloud text directives.",
-        "accountPassword": "Xiaomi cloud account, used as a fallback when LAN control is unavailable.",
+        "accountPassword": "Fallback for cloud text directives when LAN control is unavailable.",
         "passToken": "Xiaomi cloud session passToken, obtained via QR scan or MI-PassToken-Helper, without storing password.",
         "textDirective": "Optional playback directive override, e.g. 5-5.",
         "pathFrom": "MPD receives the path relative to the library root (e.g. songs/track.mp3), so this is usually empty. Only fill it when MPD's database uses a different path segment.",
         "pathTo": "Replacement path prefix.",
-        "scan": "Sends an SSDP search on the local network and lists the speakers that answered; click one to fill in the address."
+        "scan": "Sends an SSDP search on the local network and lists the speakers that answered; click one to fill in the address.",
+        "maskedSecret": "Saved — leave empty to keep the current value",
+        "pathHint": "Only needed when the MPD music folder differs from this server's MusicFolder: rewrites one path segment into another.",
+        "mpdPassword": "Leave empty when MPD allows anonymous access. If mpd.conf sets a password, paste the whole line, e.g. password \"abc123@read,add,control,admin\".",
+        "mpdSetup": "On most NASes MPD runs on the same machine on port 6600, so scanning is the quickest route. Manually, use host:port, e.g. 192.168.1.10:6600.",
+        "idHint": "Left empty it is generated from the name. Only used by the config file and the API.",
+        "advancedHint": "Usually not needed. Fill these in only when scanning fails or you must pin a token or a path mapping.",
+        "xiaomiAddress": "The speaker LAN address; the QR login fills it in.",
+        "mpdAddress": "Scanning is quickest: most NASes run MPD on port 6600 of the local subnet. You can also type host:port.",
+        "dlnaAddress": "Pick a result from the scan. Use the device description URL, not /AVTransport/control.",
+        "dlnaNoExtra": "DLNA needs no extra settings, just save.",
+        "idAuto": "Will be generated as %{id} (you can change it)"
       },
       "sourceValues": {
         "config": "Configuration file",
         "ui": "This page"
       },
       "actions": {
-        "scan": "Scan local network"
+        "scan": "Scan network",
+        "use": "Set as output",
+        "add": "Add output device",
+        "edit": "Edit",
+        "delete": "Delete",
+        "scanMpd": "Scan for MPD on the network",
+        "verifyMpd": "Test connection",
+        "next": "Next",
+        "prev": "Back",
+        "changeType": "Change"
       },
       "messages": {
         "scanFailed": "Scan failed. Are the server and the speaker on the same network?",
-        "scanEmpty": "No DLNA speaker found. Check that the speaker is on and on the same network as the server."
+        "scanEmpty": "No DLNA speaker found. Check that the speaker is on and on the same network as the server.",
+        "saved": "Output device saved",
+        "deleted": "Output device deleted",
+        "selected": "Now playing on {{name}}",
+        "mpdOk": "Connected, the password is correct.",
+        "batchSaved": "Added %{count} output device(s)%{failed}"
+      },
+      "sections": {
+        "current": "Current output",
+        "currentHint": "\"This device\" plays locally; any other device mutes the local player and hands the progress over to it.",
+        "devices": "Network devices",
+        "devicesHint": "Each card is a device that can make sound: set it as the current output, edit its connection details, or remove it. Devices defined in the config file are read-only.",
+        "basic": "Basics",
+        "connection": "Connection",
+        "xiaomi": "Xiaomi speaker",
+        "mpd": "MPD",
+        "pathMap": "Path mapping (optional)",
+        "dlna": "Connection"
+      },
+      "localOutput": "This device",
+      "localOutputHint": "Play on this device",
+      "currentBadge": "In use",
+      "empty": "No output devices configured yet.",
+      "createTitle": "Add output device",
+      "editTitle": "Edit output device",
+      "deleteTitle": "Delete output device",
+      "deleteConfirm": "Delete \"{{name}}\"? This cannot be undone.",
+      "scanFound": "devices found",
+      "errors": {
+        "idRequired": "An ID is required",
+        "idInvalid": "Only letters, digits, underscore and dash (1-64 chars)",
+        "nameRequired": "A name is required",
+        "addressRequired": "An address is required"
+      },
+      "hint": {
+        "mpdScanHint": "MPD has no broadcast mechanism, so the scan probes port 6600 across the local subnets.",
+        "needsPassword": "password required",
+        "scanEmpty": "Nothing found. Enter the address manually, or check that the device is on the same subnet.",
+        "descriptionUrl": "Device description URL (open edit to see the full address)"
+      },
+      "steps": {
+        "type": "Type",
+        "connection": "Connection",
+        "advanced": "Advanced"
+      },
+      "typeCards": {
+        "xiaomi": {
+          "title": "Xiaomi speaker",
+          "desc": "Mi / XiaoAI speakers. Scan a QR code to fill the address and token automatically."
+        },
+        "mpd": {
+          "title": "MPD",
+          "desc": "An MPD server, usually on a NAS or Raspberry Pi, port 6600."
+        },
+        "dlna": {
+          "title": "DLNA / UPnP",
+          "desc": "Any UPnP renderer on the LAN, e.g. a smart speaker or a TV."
+        }
       }
     },
     "playlist": {
@@ -666,42 +745,18 @@
     "downloadOriginalFormat": "Download in original format"
   },
   "menu": {
+    "about": "About",
+    "albumList": "Albums",
+    "jukebox": {
+      "name": "Output Devices",
+      "subtitle": "Send playback to a speaker or NAS on your network. Whichever output you pick here is the one the player and every other device in \"now playing\" will follow."
+    },
     "library": "Library",
     "librarySelector": {
       "allLibraries": "All Libraries (%{count})",
       "multipleLibraries": "%{selected} of %{total} Libraries",
       "selectLibraries": "Select Libraries",
       "none": "None"
-    },
-    "settings": "Settings",
-    "quickConnect": {
-      "name": "Quick Connect",
-      "code": "Code",
-      "help": "Enter the code shown by a Jellyfin app to sign it in to your account",
-      "confirm": "Sign in %{app} %{version} on %{device} to your account?",
-      "continue": "Continue",
-      "approve": "Approve"
-    },
-    "version": "Version",
-    "theme": "Theme",
-    "personal": {
-      "name": "Personal",
-      "options": {
-        "theme": "Theme",
-        "language": "Language",
-        "defaultView": "Default View",
-        "desktop_notifications": "Desktop Notifications",
-        "lastfmNotConfigured": "Last.fm API-Key is not configured",
-        "lastfmScrobbling": "Scrobble to Last.fm",
-        "listenBrainzScrobbling": "Scrobble to ListenBrainz",
-        "replaygain": "ReplayGain Mode",
-        "preAmp": "ReplayGain PreAmp (dB)",
-        "gain": {
-          "none": "Disabled",
-          "album": "Use Album Gain",
-          "track": "Use Track Gain"
-        }
-      }
     },
     "lyricsTranslation": {
       "name": "Lyrics Translation",
@@ -710,7 +765,6 @@
       "enable": "Enable Lyrics Translation",
       "enableHint": "Once enabled, a translate icon will appear in the player toolbar for bilingual lyrics.",
       "engineSection": "Translation Engine & Language",
-      "engine": "Translation Engine",
       "targetLanguage": "Target Language",
       "model": "Model",
       "credentialsSection": "API Credentials & Network",
@@ -731,13 +785,123 @@
       "saving": "Saving...",
       "saved": "Lyrics translation settings saved successfully!",
       "saveFailed": "Failed to save settings — check permissions or network",
-      "loadFailed": "Failed to load settings — admin privileges required"
+      "loadFailed": "Failed to load settings — admin privileges required",
+      "engine.gemini": "Google Gemini",
+      "engine.zhipu": "Zhipu GLM",
+      "engine.baidu": "Baidu Translate",
+      "engine.google": "Google Translate",
+      "engine.openai": "OpenAI-compatible",
+      "note.gemini": "Get the key from Google AI Studio (aistudio.google.com). The free tier is generous and supports the latest gemini-flash-latest and gemini-flash-lite-latest models. If the server is in mainland China and cannot reach Google directly, fill in the HTTP proxy or Base URL below.",
+      "note.zhipu": "Get the key from the Zhipu open platform (open.bigmodel.cn). Uses the glm-4-flash model by default, which is very fast and completely free.",
+      "note.baidu": "Requires an App ID and Secret Key from the Baidu translation open platform (fanyi.baidu.com/api).",
+      "note.google": "Uses the free public Google translation endpoint. No API key needed, but it is rate limited.",
+      "note.openai": "Works with any OpenAI-compatible service (DeepSeek, Moonshot, Groq, Ollama, OneAPI, ...). Fill in the API Base URL and API Key.",
+      "lang.zhCN": "Simplified Chinese (zh-CN)",
+      "lang.zhTW": "Traditional Chinese (zh-TW)",
+      "lang.en": "English (en)",
+      "lang.ja": "Japanese (ja)",
+      "lang.ko": "Korean (ko)",
+      "lang.fr": "French (fr)",
+      "lang.de": "German (de)",
+      "lang.es": "Spanish (es)",
+      "lang.currentValue": "%{code} (current value)",
+      "hint.geminiModel": "flash gives the best quality (recommended); flash-lite responds faster and uses less quota",
+      "hint.zhipuModel": "Defaults to glm-4-flash (free to call)",
+      "hint.openaiModel": "For example gpt-4o-mini, deepseek-chat, qwen-plus",
+      "label.baseUrlCustom": "Custom Base URL (reverse proxy, optional)",
+      "label.baseUrlExample": "API Base URL (e.g. https://api.deepseek.com/v1)",
+      "hint.baseUrlGemini": "Fill in only when the direct connection is blocked or a Gemini reverse proxy is used. Leave empty for the official endpoint.",
+      "hint.baseUrlOpenai": "Required for OpenAI-compatible services: the Base URL provided by the provider.",
+      "note.test": "The test calls the engine and key configured above to verify connectivity",
+      "label.cachedCount": "Cached: %{count}",
+      "tip.refreshCache": "Refresh the cache list",
+      "action.stopTask": "Stop task",
+      "label.batchProgress": "Progress: %{processed} / %{total} (%{percent}%)",
+      "label.batchCurrent": " — processing: %{name}",
+      "label.batchSucceeded": "Succeeded: %{count}",
+      "label.batchFailed": "Failed: %{count}",
+      "ph.songId": "Enter a song ID to retranslate one song...",
+      "action.retranslateSong": "Retranslate this song",
+      "label.cachedList": "Cached songs (%{count})",
+      "ph.search": "Search by song, artist or model...",
+      "empty.noCached": "No cached translations yet. Translate a song from the player and the result will be cached here.",
+      "th.song": "Song",
+      "th.language": "Language",
+      "th.model": "Model",
+      "th.updated": "Updated",
+      "th.actions": "Actions",
+      "tip.retranslateModel": "Retranslate this song with the currently selected model",
+      "tip.deleteCache": "Delete this song’s translation cache",
+      "confirm.retranslateAllTitle": "Warning: retranslate all songs?",
+      "confirm.retranslateAllModel": "Active engine: %{engine} (%{model})",
+      "confirm.retranslateAllBody": "You are about to retranslate all <strong>%{count}</strong> cached songs.",
+      "confirm.retranslateAllNotes": "Things to note",
+      "confirm.retranslateAllNote1": "This overwrites every locally cached translation;",
+      "confirm.retranslateAllNote2": "each song is sent to the external AI service one by one, which may burn a lot of API quota and take several minutes;",
+      "confirm.retranslateAllNote3": "you can stop the task from this page at any time.",
+      "confirm.retranslateAllAction": "Retranslate all songs now?",
+      "confirm.clearCacheTitle": "Clear the whole translation cache?",
+      "confirm.clearCacheBody": "The translation files of all <strong>%{count}</strong> cached songs will be permanently deleted from disk.",
+      "confirm.clearCacheBody2": "Translations will be regenerated with the currently configured model the next time a user translates in the player.",
+      "confirm.clearCacheAction": "Clear the whole cache",
+      "action.cancel": "Cancel",
+      "error.unknown": "Unknown error",
+      "error.requestFailed": "Request failed, please check the network or the service settings",
+      "confirm.defaultModel": "Default",
+      "confirm.retranslateAllConfirm": "Retranslate all songs",
+      "engine": "Translation engine",
+      "cacheManagementTitle": "Translated songs & retranslation",
+      "cacheManagementDesc": "Translations are cached on local disk permanently. After switching to a different engine or a more accurate model, you can retranslate a single song or all of them here.",
+      "retranslateAllBtn": "Retranslate all songs",
+      "retranslateAllTitle": "Warning: retranslate all songs?",
+      "clearAllCacheBtn": "Clear all cache",
+      "retranslateSuccess": "Song retranslated and the cache updated!",
+      "retranslateFailed": "Retranslation failed: %{reason}",
+      "retranslatingSingle": "Retranslating this song with the current model...",
+      "deleteCacheSuccess": "Translation cache deleted for this song",
+      "deleteCacheFailed": "Delete failed: %{reason}",
+      "clearedAll": "Cleared the whole translation cache (%{count} files removed)!",
+      "clearFailed": "Clear failed: %{reason}",
+      "batchRunningTitle": "Retranslating all cached songs...",
+      "batchStarted": "Background retranslation started, it is running now...",
+      "batchStartFailed": "Could not start the job: %{reason}",
+      "batchFinished": "Done! %{success} succeeded, %{failed} failed.",
+      "batchCanceled": "Stop requested for the batch retranslation job",
+      "note.unknown": ""
     },
-    "albumList": "Albums",
-    "playlists": "Playlists",
     "onlyFavourites": "Only show favourites",
+    "personal": {
+      "name": "Personal",
+      "options": {
+        "theme": "Theme",
+        "language": "Language",
+        "defaultView": "Default View",
+        "desktop_notifications": "Desktop Notifications",
+        "lastfmNotConfigured": "Last.fm API-Key is not configured",
+        "lastfmScrobbling": "Scrobble to Last.fm",
+        "listenBrainzScrobbling": "Scrobble to ListenBrainz",
+        "replaygain": "ReplayGain Mode",
+        "preAmp": "ReplayGain PreAmp (dB)",
+        "gain": {
+          "none": "Disabled",
+          "album": "Use Album Gain",
+          "track": "Use Track Gain"
+        }
+      }
+    },
+    "playlists": "Playlists",
+    "quickConnect": {
+      "name": "Quick Connect",
+      "code": "Code",
+      "help": "Enter the code shown by a Jellyfin app to sign it in to your account",
+      "confirm": "Sign in %{app} %{version} on %{device} to your account?",
+      "continue": "Continue",
+      "approve": "Approve"
+    },
+    "settings": "Settings",
     "sharedPlaylists": "Shared Playlists",
-    "about": "About"
+    "theme": "Theme",
+    "version": "Version"
   },
   "player": {
     "playListsText": "Play Queue",
@@ -772,7 +936,10 @@
     "translateEmpty": "No translatable lyrics found",
     "translateNotFound": "No lyrics available for this song",
     "translateForbidden": "Lyrics translation is disabled — configure it in Settings",
-    "translateFailed": "Translation failed — check network or API settings"
+    "translateFailed": "Translation failed — check network or API settings",
+    "retranslating": "Retranslating...",
+    "retranslateSuccess": "Retranslated",
+    "retranslateFailed": "Retranslation failed"
   },
   "about": {
     "links": {

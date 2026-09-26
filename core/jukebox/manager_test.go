@@ -110,6 +110,17 @@ var _ = Describe("DeviceManager", func() {
 			Expect(drv.stopped).To(BeTrue())
 		})
 
+		It("is a no-op when the output is already selected", func() {
+			Expect(m.Select("mpd-nas")).To(Succeed())
+			drv = &fakeDriver{}
+			m.driver = drv
+			// Selecting it again must keep the same driver instance: rebuilding
+			// would drop the device session and re-do the handshake.
+			Expect(m.Select("mpd-nas")).To(Succeed())
+			Expect(m.Selected()).To(Equal("mpd-nas"))
+			Expect(drv.stopped).To(BeFalse())
+		})
+
 		It("rejects unknown devices", func() {
 			Expect(m.Select("nope")).To(MatchError(ContainSubstring("unknown jukebox device")))
 			Expect(m.Selected()).To(Equal(BrowserOutputID))

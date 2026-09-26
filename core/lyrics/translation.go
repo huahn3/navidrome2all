@@ -450,7 +450,9 @@ func (s *TranslationService) StartBatchRetranslate(ctx context.Context) error {
 	}
 	s.batchMu.Unlock()
 
-	go func() {
+	// The batch job must outlive the HTTP request that started it, so it cannot
+	// use the request context; cancellation goes through s.batchCancel.
+	go func() { //nolint:gosec // see above
 		defer func() {
 			s.batchMu.Lock()
 			s.batchStatus.Running = false

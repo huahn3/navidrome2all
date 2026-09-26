@@ -91,6 +91,25 @@ MPD 是"让 NAS 本机声卡出声"最省事的方案：Navidrome 只告诉 MPD 
 解码和出声完全由 MPD 负责。驱动每次操作新开一条 TCP 连接，播放 =
 `clear` + `add <路径>` + `play 0`（`core/jukebox/driver_mpd.go`）。
 
+**⓪ 先用页面上的"扫描局域网"找设备（推荐第一步）**
+
+新建输出的第 2 步里点「扫描局域网」，后端会 `GET /api/jukebox/discover/mpd`：
+扫**本机所在私网 `/24`** 的 6600 端口（最多 32 个并发、每地址 400ms、最长约 4s），
+对每个应答者读一次 `password` 字段，直接告诉你三件事：MPD 版本、**要不要密码**、
+密码写在 `mpd.conf` 的哪一行。扫到的东西点一下就填进地址框。
+
+```json
+[{"address":"192.168.31.88:6600","version":"0.21.11","needsPassword":true,
+  "passwordLine":"password \"secret@read,add,control\" @"}]
+```
+
+- `needsPassword=true` 时密码框旁会提示"密码是 mpd.conf 里 password 那一行
+  `@` 前面的部分"——`@` 后面是权限列表，**不要一起填进去**。
+- 填完地址点「测试连接」走 `POST /api/jukebox/verify/mpd`，会当场校验密码对不对，
+  不对就明确报错，省得存完设备选不中才发现。
+- 扫不到很正常：MPD 默认只监听回环（见 ③），或不在同一个 `/24`。
+  这时跳过扫描、手填 `host:port` 即可，扫描只是便利功能。
+
 **① 路径语义（最容易踩的坑）**
 
 驱动传给 MPD 的是 **相对音乐库根目录的路径**，也就是数据库 `media_file.path`
@@ -206,6 +225,9 @@ python3 contrib/jukebox-testing/fake_mpd.py     # 监听 127.0.0.1:16600
 在页面临时建一个 `Type = MPD` / `Address = 127.0.0.1:16600` 的设备，选中并播放，
 `tail -f /tmp/nd_fake_mpd.log` 会打印 MPD 收到的原始命令（含 `add "..."` 的确切路径）。
 确认路径符合预期后删掉该设备，再配真实 MPD。
+
+不装 Python 也能测连接：`POST /api/jukebox/verify/mpd`
+（`{"address":"127.0.0.1:16600","password":""}`）会返回 `version` 与 `authenticated`。
 
 ### DLNA / UPnP 输出配置教程
 
@@ -374,14 +396,20 @@ BaseUrl = "http://192.168.31.246:14533"
 | POST | `/play` | 管理员* | `{song_id?, stream_url?, position?}`；position>0 时播放后 seek，并校验设备是否真的跳转（见"故障排查"） |
 | POST | `/control` | 管理员* | `{action, value}`；action ∈ `pause/resume/stop/seek/volume` |
 | GET | `/discover?timeout=N` | **管理员** | SSDP 扫描结果 `[{usn,name,address,model}]`；`address` 可直接粘进输出的 `Address` |
+| GET | `/discover/mpd?port=N&timeout=S` | **管理员** | 扫本机所在私网 `/24` 的 MPD，返回 `[{address,version,needsPassword,passwordLine}]`；`port` 默认 6600、`timeout` 默认 4（秒，上限见代码） |
+| POST | `/verify/mpd` | **管理员** | `{"address":"host:port","password":"..."}` → `{"ok":true,"version":"0.21.11","authenticated":true}`；地址不可达/不是 MPD/密码错会分别给出明确错误 |
 | GET | `/outputs` | **管理员** | 网页上创建的输出列表（含 TOML 条目时以 DB 覆盖同 ID） |
 | POST | `/outputs` | **管理员** | 新建输出；`id` 必须 1-64 位 `[a-zA-Z0-9_-]` |
 | GET/PUT/DELETE | `/outputs/{id}` | **管理员** | 读 / 改 / 删单个输出 |
 
 \* `Jukebox.AdminOnly=false` 时所有登录用户可用。`Jukebox.Enabled=false` 时全部 403。
 
-`/outputs` 与 `/discover` **始终是管理员**（不受 `AdminOnly` 影响）：输出配置里存着设备
-token 与账号密码。响应体会被剥掉这些密钥字段，写请求需要全量字段。
+`/outputs` 与 `/discover*`、`/verify/*` **始终是管理员**（不受 `AdminOnly` 影响）：输出配置里
+存着设备 token 与账号密码。
+
+`/outputs` 的**密码类字段是脱敏往返**：`GET` 时 `password`/`token`/账号口令会变成
+`SECRET_MASK`（`********`），`PUT` 提交 `SECRET_MASK` 表示"沿用库里原值"，
+而不是把字面量 `********` 存进去。所以前端必须能区分"用户没改"和"用户填了新密码"。
 
 ## 前端
 
@@ -398,20 +426,34 @@ token 与账号密码。响应体会被剥掉这些密钥字段，写请求需�
   `playerReducer` 新增 `outputDevice` 状态
   - 切换输出与首次向设备下发歌曲时都带上本地时钟的 `position`，避免从 0 重播
   - `deviceType === 'xiaomi'` 时跳过漂移校准与用户 seek 转发（设备不支持）
-- `ui/src/jukebox/`：「管理 → 输出设备」的 list / create / edit 三个页面
-  （**没有 show 页**：列表行点进 edit，无处跳转 show），DLNA 表单内嵌"扫描局域网"区块
+- `ui/src/jukebox/`：「管理 → 输出设备」控制台，路由 `/jukebox-outputs`
+  （不再是 react-admin 的 list/create/edit 页，也没有 show 页）
+  - `JukeboxOutputs.jsx`：卡片列表 + header「新增输出设备」按钮（移动端是右下角 FAB），
+    卡片显示类型徽标与地址（DLNA 只显示 `host:port`，完整描述 URL 放 tooltip）；
+    在这里选中输出会 `dispatch(setOutputDevice(...))`，播放底栏随之勾选
+  - `OutputEditorDialog.jsx`：新增/编辑共用的**三步向导**弹窗
+    1. **类型**：三张大卡片（小爱音箱 / MPD / DLNA），点一下即选中并进入下一步
+    2. **连接**：只显示该类型所需字段；MPD/DLNA 内嵌扫描按钮，MPD 还有密码格式提示与「测试连接」
+    3. **高级**（可选）：token/did/model/账号/路径映射，默认说明"一般不用填"
+  - ID 留空时按名称自动生成，输入框下方实时预览（`Living Room MPD` → `living-room-mpd`；
+    纯中文名 → `xiaomi-54hp`），保存时才落库
+  - `XiaomiAuthBlock.jsx`：小爱授权区块。扫码/账密/passToken 登录后列出账号下**全部**音箱，
+    支持**勾选多台一次性添加为输出设备**（每台是独立输出，各带 token/did/型号）；
+    没有局域网 IP 的设备不可选；批量创建会自动去重 ID（服务端对重复 ID 直接 400）；
+    结果用 Alert 汇总成功/失败，部分失败时弹窗不关闭。只加一台可用「选用此音箱」填入表单
 - `ui/src/reducers/playerReducer.js` + `ui/src/store/createAdminStore.js`：
   `outputDevice` 与 `volume` 的持久化白名单
 - `ui/src/config.js`：读取 `jukeboxEnabled` 决定是否显示选择器，`defaultUIVolume` 是默认音量
 
 ## 测试
 
-- Go（Ginkgo）：`make test PKG=./core/jukebox`（98 specs，含 xiaomi 驱动的假 miio
-  UDP 服务器与 httptest 假小米云、假 DLNA 渲染器与 SSDP 回放）、
-  `make test PKG=./server/nativeapi`（183 specs，含输出 CRUD 的鉴权与 ID 校验）、
+- Go（Ginkgo）：`make test PKG=./core/jukebox`（112 specs，含 xiaomi 驱动的假 miio
+  UDP 服务器与 httptest 假小米云、假 DLNA 渲染器与 SSDP 回放、MPD 扫描与密码探测）、
+  `make test PKG=./server/nativeapi`（191 specs，含输出 CRUD 的鉴权、ID 校验与凭据掩码保留）、
   `server/subsonic` 含 `StreamAlias`（`/rest/stream/{id}.mp3`）用例
-- 前端（Vitest）：`cd ui && npm run test`（88 文件 / 774 用例，含 `DeviceSelector.test.jsx`、
-  `VolumeControl.test.jsx`、`PlayerToolbar.test.jsx`、`playerReducer.test.js`）
+- 前端（Vitest）：`cd ui && npm run test`（92 文件 / 804 用例，含 `DeviceSelector.test.jsx`、
+  `VolumeControl.test.jsx`、`PlayerToolbar.test.jsx`、`playerReducer.test.js`、
+  `volume.test.js`）
 - 端到端：`contrib/jukebox-testing/` 提供假 MPD / 假 DLNA 服务器，
   可配合真实 Navidrome 实例做 select→play→status→seek→volume→pause→切回 全流程验证
   （详见该目录 README）

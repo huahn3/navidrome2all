@@ -131,14 +131,43 @@ func (p *MyNewProvider) Translate(ctx context.Context, lines []string, targetLan
 
 ### 4. 前端表单扩展
 在 `ui/src/lyricsTranslation/LyricsTranslation.jsx`：
-- 在 `ENGINE_OPTIONS` 中添加 `{ id: 'mynew', name: '...' }`
-- 按需控制显示模型、Key、BaseURL、ProxyURL 等输入项。
+- 把新引擎 id 加进 `ENGINE_IDS`，并在 `ENGINE_LABEL_KEYS` 里补一条**字面量** key
+  （`{ mynew: 'menu.lyricsTranslation.engine.mynew' }`）
+- 在 `ENGINE_NOTE_KEYS` 里补说明卡片的 key
+- 按需控制显示模型、Key、BaseURL、ProxyURL 等输入项（未启用引擎的输入项用条件渲染）
 
-### 5. i18n
-在 `ui/src/i18n/en.json`、`resources/i18n/zh-Hans.json`、`zh-Hant.json` 补齐相应文案。
+> 这一页的选项是"id 数组 + key 映射表"，不是 `{id,label}` 对象数组。
+> 两种写法混用会让 `value` 全变成 `undefined`，下拉框渲染成空白且菜单打不开
+> （真实踩过，见 `docs/risk-notes-optimization.md` §11.7.2）。
 
-### 6. 测试
+### 5. i18n（三份都要写 + 校验）
+
+- `ui/src/i18n/en.json`、`resources/i18n/zh-Hans.json`、`resources/i18n/zh-Hant.json`
+- **key 一律写字面量，不要用模板字符串拼**：`` t(`menu.lyricsTranslation.engine.${id}`) ``
+  拼出来的 key 校验器抓不到，语言包里命名一对不上就静默回退（界面上显示成语言码，
+  而且中文界面完全看不出来）。语言码带连字符（`zh-CN`）而 key 名是 `zhCN`，
+  所以必须显式映射表。
+- 改完必跑两条：
+
+```bash
+python3 scripts/check-i18n-keys.py   # 引用了但语言包里没有的 key（期望 0）
+make test-i18n                        # 36 份语言包与 en.json 的 key 对齐
+```
+
+### 6. 手机端（这一页是窄屏重灾区）
+
+- 表单容器已挂 `className="responsive-fields"`；字段组用 `row`（grid +
+  `minmax(0, 1fr)`，手机单列 / 桌面双列），**不要**改回 `flex: 1 1 240px`
+  （窄屏不会真的换行，会被内容顶成两列半宽控件）
+- 引擎开关关闭时那个 `Collapse` 必须保留 `unmountOnExit`，否则隐藏内容仍参与
+  min-content 计算，把整页撑到 500+px
+- 缓存表格容器需要 `overflow-x: auto` **加** `contain: inline-size`，
+  只写前者无效（容器是普通块，min-content 仍等于表格宽度）
+
+### 7. 测试
 编写单测（参考 `core/lyrics/translation_test.go`），用 `httptest.Server` 模拟 API 响应。
+前端 `LyricsTranslation.test.jsx` 里注意：`useTranslate` 被 mock 成
+`(key, options) => options?._ || key`（不做插值），所以断言的是**兜底默认值**。
 
 ---
 
@@ -153,18 +182,38 @@ func (p *MyNewProvider) Translate(ctx context.Context, lines []string, targetLan
 | 报错 500 (Baidu 54001) | 百度签名或 AppID 错误 | 检查 `AppID` 与 `SecretKey` 是否配反或有空格 |
 | 抽屉歌词变了但悬浮歌词不变 | 底层播放器内核未重置 | 确保调用了 `initLyricParser()` 和 `update(timeMs)` |
 | 重新翻译旧歌曲结果不变 | 命中了磁盘持久化缓存 | 检查 `<DataFolder>/lyrics_translations/`，或用 API 带 `"force": true` 强制刷新 |
+| 界面某处文案变成语言码/英文 | i18n key 没对上，静默回退到 `_:` 默认值 | 跑 `python3 scripts/check-i18n-keys.py`；确认没有用模板字符串拼 key |
+| 手机端右侧内容被裁 / appbar 图标被挤掉 | 某后代 min-content 超过视口（`Layout` 是 `min-width: fit-content`） | 用 `build-and-test` skill 里的离屏探针逐层量 min-content 定位元凶；**注意空状态不渲染表格/列表，要造真实数据再测** |
 
 ---
 
 ## 6. 验证命令
 
 ```bash
-# 后端测试
+# 后端测试（42 specs）
 make test PKG=./core/lyrics
 gofmt -l core/lyrics conf server/nativeapi
 
 # 前端测试
 cd ui
 npx vitest run src/audioplayer/TranslateButton.test.jsx
-npm run lint
+npx vitest run src/lyricsTranslation                  # 管理页 6 例
+npm run lint && npm run check-formatting
+
+# i18n
+python3 scripts/check-i18n-keys.py
+make test-i18n
+```
+
+### 造缓存数据做 UI 验证
+
+管理页的"已翻译歌曲"表格只在**有缓存时**才渲染，空状态下测不到那条路径
+（连续两轮漏测就是栽在这里）。手工造两条：
+
+```bash
+SONG_ID=$(curl -s -H "X-ND-Authorization: Bearer $TOKEN" \
+  'http://localhost:4533/api/song?_end=2&_start=0' | python3 -c 'import json,sys;print(json.load(sys.stdin)[0]["id"])')
+mkdir -p <DataFolder>/lyrics_translations
+printf '{"songId":"%s","lang":"zh-Hans","lines":[{"start":0,"end":5000,"original":"a","translation":"b"}]}' \
+  "$SONG_ID" > <DataFolder>/lyrics_translations/${SONG_ID}_zh-Hans.json
 ```

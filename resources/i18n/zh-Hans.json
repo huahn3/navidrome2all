@@ -437,7 +437,9 @@
         "account": "小米账号",
         "passToken": "passToken 凭证",
         "textDirective": "文本指令",
-        "source": "来源"
+        "source": "来源",
+        "accountPassword": "小米云端账号密码",
+        "mpdPassword": "MPD 密码"
       },
       "types": {
         "xiaomi": "小米 / 小爱音箱",
@@ -456,18 +458,95 @@
         "textDirective": "可选的播放指令覆盖，例如 5-5。",
         "pathFrom": "MPD 收到的路径是相对音乐库根目录的（如 songs/track.mp3），一般留空。仅当 MPD 曲库里的目录名与它不一致时填写要替换的那一段。",
         "pathTo": "替换后的路径前缀。",
-        "scan": "在局域网发送 SSDP 搜索并在下方列出响应的音箱，点击即可填入地址。"
+        "scan": "在局域网发送 SSDP 搜索并在下方列出响应的音箱，点击即可填入地址。",
+        "maskedSecret": "已保存 —— 留空则保持原值不变",
+        "pathHint": "仅在 MPD 曲库目录与本服务 MusicFolder 不一致时使用：把歌曲路径中的一段替换成另一段。",
+        "mpdPassword": "留空表示 MPD 允许匿名访问。若 mpd.conf 里设了密码，请把整个 password 行原样填进来，例如 password \"abc123@read,add,control,admin\"。",
+        "mpdSetup": "大多数 NAS 的 MPD 就在同一台机器上、默认端口 6600，先扫描一下最快。手动填时地址写 host:port，例如 192.168.1.10:6600。",
+        "idHint": "留空会按名称自动生成；仅用于配置文件与接口调用。",
+        "advancedHint": "一般不用填。只有扫码失败、或需要手工指定令牌/路径映射时才用得上。",
+        "xiaomiAddress": "音箱的局域网 IP，扫码登录后会自动填好。",
+        "mpdAddress": "扫描最省事：多数 NAS 的 MPD 就在本机网段的 6600 端口。也可以手填 host:port。",
+        "dlnaAddress": "扫描后点选结果即可；要填设备描述文档 URL，不是 /AVTransport/control。",
+        "dlnaNoExtra": "DLNA 不需要额外设置，保存即可使用。",
+        "idAuto": "将自动生成为：%{id}（可自行修改）"
       },
       "sourceValues": {
         "config": "配置文件",
         "ui": "本页面"
       },
       "actions": {
-        "scan": "扫描局域网"
+        "scan": "扫描局域网",
+        "use": "设为输出",
+        "add": "新增输出设备",
+        "edit": "编辑",
+        "delete": "删除",
+        "scanMpd": "扫描局域网内的 MPD",
+        "verifyMpd": "测试连接",
+        "next": "下一步",
+        "prev": "上一步",
+        "changeType": "更换"
       },
       "messages": {
         "scanFailed": "扫描失败，服务器和音箱在同一个局域网吗？",
-        "scanEmpty": "没有找到 DLNA 音箱，请确认音箱已开机且与服务器在同一网络。"
+        "scanEmpty": "没有找到 DLNA 音箱，请确认音箱已开机且与服务器在同一网络。",
+        "saved": "输出设备已保存",
+        "deleted": "输出设备已删除",
+        "selected": "已切换到「{{name}}」播放",
+        "mpdOk": "连接成功，密码正确。",
+        "batchSaved": "已添加 %{count} 台输出设备%{failed}"
+      },
+      "localOutput": "本机浏览器",
+      "localOutputHint": "在这台设备上直接播放",
+      "currentBadge": "使用中",
+      "empty": "还没有配置任何输出设备。",
+      "createTitle": "新增输出设备",
+      "editTitle": "编辑输出设备",
+      "deleteTitle": "删除输出设备",
+      "deleteConfirm": "确定要删除「{{name}}」吗？此操作不可撤销。",
+      "scanFound": "台设备",
+      "sections": {
+        "current": "当前输出",
+        "currentHint": "「本机」= 这台设备自己出声；选其它设备时，本机播放器会静音并把进度交给它。",
+        "devices": "局域网设备",
+        "devicesHint": "每张卡片是一台可出声的设备：可以设为当前输出、修改连接信息或删除。配置文件里定义的设备只读。",
+        "basic": "基本",
+        "connection": "连接",
+        "xiaomi": "小爱音箱",
+        "mpd": "MPD",
+        "pathMap": "路径映射（可选）",
+        "dlna": "连接"
+      },
+      "errors": {
+        "idRequired": "需要填写 ID",
+        "idInvalid": "ID 只能包含字母、数字、下划线和短横线（1-64 位）",
+        "nameRequired": "需要填写名称",
+        "addressRequired": "需要填写地址"
+      },
+      "hint": {
+        "mpdScanHint": "MPD 没有广播机制，扫描会依次探测本机各网段的 6600 端口（约 1-2 秒）。",
+        "needsPassword": "需要密码",
+        "scanEmpty": "没找到设备。可以手动填写地址，或确认设备与本服务在同一网段。",
+        "descriptionUrl": "设备描述 URL（点编辑可看完整地址）"
+      },
+      "steps": {
+        "type": "1. 类型",
+        "connection": "2. 连接",
+        "advanced": "3. 高级"
+      },
+      "typeCards": {
+        "xiaomi": {
+          "title": "小爱音箱",
+          "desc": "小米/小爱音箱，扫码即可自动填好地址与令牌。"
+        },
+        "mpd": {
+          "title": "MPD",
+          "desc": "NAS 或树莓派上的 MPD 音乐服务，通常是 6600 端口。"
+        },
+        "dlna": {
+          "title": "DLNA / UPnP",
+          "desc": "局域网里任意 UPnP 设备，比如智能音箱或电视。"
+        }
       }
     }
   },
@@ -660,7 +739,10 @@
     "shareSuccess": "URL 已复制: %{url}",
     "shareFailure": "URL 复制失败: %{url}",
     "downloadDialogTitle": "下载 %{resource} '%{name}' (%{size})",
-    "downloadOriginalFormat": "下载原始格式"
+    "downloadOriginalFormat": "下载原始格式",
+    "quickConnectApproved": "{{app}} 已在 {{device}} 上登录",
+    "quickConnectError": "授权失败",
+    "quickConnectInvalidCode": "授权码无效或已过期"
   },
   "menu": {
     "library": "媒体库",
@@ -699,7 +781,6 @@
       "enable": "启用歌词翻译功能",
       "enableHint": "开启后，播放器工具栏将显示「翻译歌词」按钮，点击即可实时获取双语对照歌词。",
       "engineSection": "翻译引擎与语言",
-      "engine": "翻译引擎",
       "targetLanguage": "翻译目标语言",
       "model": "模型",
       "credentialsSection": "API 密钥与网络参数",
@@ -720,13 +801,107 @@
       "saving": "正在保存...",
       "saved": "歌词翻译配置已成功保存！",
       "saveFailed": "保存配置失败，请检查网络或权限",
-      "loadFailed": "加载配置失败，请确认是否具备管理员权限"
+      "loadFailed": "加载配置失败，请确认是否具备管理员权限",
+      "engine.gemini": "Google Gemini",
+      "engine.zhipu": "智谱 GLM",
+      "engine.baidu": "百度翻译",
+      "engine.google": "Google 翻译",
+      "engine.openai": "OpenAI 兼容接口",
+      "note.gemini": "Key 来自 Google AI Studio (aistudio.google.com)。免费配额充足，支持最新的 gemini-flash-latest 与 gemini-flash-lite-latest 模型。若在国内服务器部署且直连受阻，可填写下方的 HTTP 代理或 Base URL。",
+      "note.zhipu": "Key 来自智谱开放平台 (open.bigmodel.cn)。默认使用 glm-4-flash 模型，调用速度极快且完全免费。",
+      "note.baidu": "需要百度翻译开放平台 (fanyi.baidu.com/api) 的 App ID 与密钥 (Secret Key)。",
+      "note.google": "使用 Google 免费公共翻译接口，无需 API Key，但受限于公共请求频率。",
+      "note.openai": "适用于所有兼容 OpenAI 格式的服务（例如 DeepSeek、Moonshot、Groq、Ollama、OneAPI 等），需填写 API Base URL 与 API Key。",
+      "lang.zhCN": "简体中文",
+      "lang.zhTW": "繁體中文",
+      "lang.en": "英语 (en)",
+      "lang.ja": "日语 (ja)",
+      "lang.ko": "韩语 (ko)",
+      "lang.fr": "法语 (fr)",
+      "lang.de": "德语 (de)",
+      "lang.es": "西班牙语 (es)",
+      "lang.currentValue": "%{code}（当前配置值）",
+      "hint.geminiModel": "flash 效果最好（推荐）；flash-lite 响应更快、更省额度",
+      "hint.zhipuModel": "默认使用 glm-4-flash (完全免费调用)",
+      "hint.openaiModel": "例如 gpt-4o-mini、deepseek-chat、qwen-plus 等",
+      "label.baseUrlCustom": "自定义 Base URL (反向代理，可选)",
+      "label.baseUrlExample": "API Base URL (例如 https://api.deepseek.com/v1)",
+      "hint.baseUrlGemini": "直连受阻或使用了 Gemini 反向代理时填写，留空默认官方地址。",
+      "hint.baseUrlOpenai": "OpenAI 兼容接口必填服务商提供的 Base URL。",
+      "note.test": "测试会直接调用上方配置的引擎与密钥验证连通性",
+      "label.cachedCount": "已缓存: %{count} 首",
+      "tip.refreshCache": "刷新缓存列表",
+      "action.stopTask": "终止任务",
+      "label.batchProgress": "当前进度: %{processed} / %{total} (%{percent}%)",
+      "label.batchCurrent": " — 处理中: %{name}",
+      "label.batchSucceeded": "成功: %{count}",
+      "label.batchFailed": "失败: %{count}",
+      "ph.songId": "输入歌曲 ID 重新翻译单首歌曲...",
+      "action.retranslateSong": "重新翻译此歌曲",
+      "label.cachedList": "已缓存歌曲列表 (%{count})",
+      "ph.search": "搜索歌名、歌手或模型...",
+      "empty.noCached": "暂无已缓存的翻译歌曲。在播放器中点击「翻译歌词」后，结果将自动缓存在这里。",
+      "th.song": "歌曲",
+      "th.language": "语言",
+      "th.model": "翻译模型",
+      "th.updated": "更新时间",
+      "th.actions": "操作",
+      "tip.retranslateModel": "使用当前选定模型重新翻译此歌曲",
+      "tip.deleteCache": "删除该歌曲翻译缓存",
+      "confirm.retranslateAllTitle": "警告：确认重新翻译所有歌曲？",
+      "confirm.retranslateAllModel": "当前生效模型：%{engine} (%{model})",
+      "confirm.retranslateAllBody": "您即将对已缓存的全部 <strong>%{count}</strong> 首歌曲发起重新翻译。",
+      "confirm.retranslateAllNotes": "注意事项",
+      "confirm.retranslateAllNote1": "此操作将覆盖本地现有的全部翻译缓存；",
+      "confirm.retranslateAllNote2": "系统将在后台逐一调用外部 AI 接口重新翻译，根据歌曲数量可能消耗较多 API 配额并需要数分钟；",
+      "confirm.retranslateAllNote3": "重新翻译过程中您随时可以在本页面点击终止任务。",
+      "confirm.retranslateAllAction": "确定要立即重新翻译所有歌曲吗？",
+      "confirm.clearCacheTitle": "确认清空全部翻译缓存？",
+      "confirm.clearCacheBody": "清空后，本地磁盘上已保存的全部 <strong>%{count}</strong> 首歌曲翻译文件将被永久删除。",
+      "confirm.clearCacheBody2": "用户之后在播放器中点击翻译时，将自动使用当前配置的新模型重新生成双语歌词。",
+      "confirm.clearCacheAction": "确认清空全部缓存",
+      "action.cancel": "取消",
+      "error.unknown": "未知错误",
+      "error.requestFailed": "请求失败，请检查网络或服务配置",
+      "confirm.defaultModel": "默认",
+      "confirm.retranslateAllConfirm": "确认重新翻译全部歌曲",
+      "engine": "翻译引擎",
+      "cacheManagementTitle": "已翻译歌曲管理与重新翻译",
+      "cacheManagementDesc": "已翻译的歌词默认永久缓存于本地磁盘。当您切换了不同的 AI 翻译引擎或高精度模型后，可在此重新翻译单首歌曲或批量重新翻译所有歌曲。",
+      "retranslateAllBtn": "重新翻译所有歌曲",
+      "retranslateAllTitle": "警告：确认重新翻译所有歌曲？",
+      "clearAllCacheBtn": "清空全部缓存",
+      "retranslateSuccess": "歌曲重新翻译成功并已更新缓存！",
+      "retranslateFailed": "重新翻译失败: %{reason}",
+      "retranslatingSingle": "正在使用当前选定的模型重新翻译该歌曲...",
+      "deleteCacheSuccess": "已删除该歌曲的翻译缓存",
+      "deleteCacheFailed": "删除失败: %{reason}",
+      "clearedAll": "已成功清空全部翻译缓存（共清除 %{count} 个文件）！",
+      "clearFailed": "清空失败: %{reason}",
+      "batchRunningTitle": "正在批量重新翻译所有已缓存歌曲...",
+      "batchStarted": "已启动后台批量重新翻译任务，正在处理中...",
+      "batchStartFailed": "启动失败: %{reason}",
+      "batchFinished": "所有歌曲重新翻译完成！成功 %{success} 首，失败 %{failed} 首。",
+      "batchCanceled": "已请求终止批量重新翻译任务",
+      "note.unknown": ""
     },
     "albumList": "专辑",
     "playlists": "歌单",
     "sharedPlaylists": "共享的歌单",
     "onlyFavourites": "仅显示收藏项",
-    "about": "关于"
+    "about": "关于",
+    "jukebox": {
+      "name": "输出设备",
+      "subtitle": "把播放交给局域网里的音箱或 NAS。这里选择哪个输出，播放器和「正在播放」里的其他设备都会跟着切过去。"
+    },
+    "quickConnect": {
+      "name": "快速连接",
+      "code": "授权码",
+      "help": "输入 Jellyfin 客户端显示的授权码，即可登录你的账号",
+      "confirm": "确认在「{{device}}」登录 {{app}} {{version}}？",
+      "continue": "继续",
+      "approve": "批准"
+    }
   },
   "player": {
     "playListsText": "播放队列",
@@ -761,7 +936,10 @@
     "translateEmpty": "未找到可翻译的歌词",
     "translateNotFound": "当前歌曲暂无歌词可供翻译",
     "translateForbidden": "歌词翻译功能未开启，请在「歌词翻译」独立设置中开启",
-    "translateFailed": "歌词翻译失败，请检查网络或API配置"
+    "translateFailed": "歌词翻译失败，请检查网络或API配置",
+    "retranslating": "正在重新翻译...",
+    "retranslateSuccess": "已重新翻译",
+    "retranslateFailed": "重新翻译失败"
   },
   "about": {
     "links": {

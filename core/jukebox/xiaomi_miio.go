@@ -105,12 +105,6 @@ func (c *miioClient) handshake(conn *net.UDPConn) error {
 	return nil
 }
 
-// currentStamp approximates the device clock: hello stamp + elapsed seconds.
-// Devices accept stamps within a window around their own uptime clock.
-func (c *miioClient) currentStamp() uint32 {
-	return c.stamp + uint32(time.Since(c.stampAt).Seconds()) + 1
-}
-
 // ensureHandshake performs the hello exchange (on its own connection) when
 // the device ID is not known yet.
 func (c *miioClient) ensureHandshake() error {

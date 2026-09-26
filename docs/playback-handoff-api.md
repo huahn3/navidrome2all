@@ -20,11 +20,16 @@
 所有 `/api/playback/` 接口均走 Native API 鉴权，必须在 HTTP Header 中携带有效 Token：
 
 ```http
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 ```
-*(亦兼容 `X-ND-Authorization: Bearer <token>`)*
 
-> Token 可通过 `POST /auth/login`（用户名密码）获得。
+> ⚠️ **只认 `X-ND-Authorization`**：标准的 `Authorization: Bearer <token>` 会被拒（401）。
+> 不方便设 header 时可用 query 参数 `?jwt=<token>`（任意 `/api/*` 路径都支持）。
+> Token 通过 `POST /auth/login`（用户名密码）获得。
+
+> 📋 **接入前请先看 [`docs/handoff-client-integration.md`](handoff-client-integration.md)**：
+> 那份是逐条对照代码 + 本地实例 curl 实测过的客户端接入任务书（含端点实测结果、
+> 会话 TTL/插值/volume 语义、SSE 过滤规则、与本文的 10 处差异）。
 
 ---
 
@@ -124,7 +129,6 @@ Authorization: Bearer <token>
 ---
 
 ### 3.3 接管会话 / 协同停播：`POST /api/playback/sessions/{sessionId}/takeover`
-### 3.3 接管会话 / 互斥停播交接：`POST /api/playback/sessions/{sessionId}/takeover`
 
 当设备 B 点击接管设备 A 的播放后，设备 B 应调用此接口告知服务端**将原设备 A 停播或置为暂停**，并触发全局 SSE 广播，实现“A 播 B 停，B 播 A 停”的单发声源互斥。
 

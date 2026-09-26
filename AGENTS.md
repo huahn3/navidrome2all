@@ -29,7 +29,9 @@ Navidrome 的私有 fork，核心二开包含两大能力：
   `docs/jukebox-api.md`（多输出端 Jukebox API 与第三方客户端集成指南）、
   `docs/jukebox-nas-deployment.md`（NAS 部署）、`docs/xiaomi-speakers.md`（小米协议调研）、
   `docs/lyrics-translation-api.md`（歌词翻译 API 与第三方客户端集成）、
-  `docs/playback-handoff-api.md`（活跃会话与多端同步接管 API 集成指南）。
+  `docs/playback-handoff-api.md`（活跃会话与多端同步接管 API 集成指南）、
+  `docs/handoff-client-integration.md`（播放接管客户端集成指南）、
+  `docs/risk-notes-optimization.md`（最近一轮优化的风险、验证与回滚记录，改代码前先读）。
 
 ## 2. 常用命令
 
@@ -37,22 +39,26 @@ Go **必须带 build tags**，否则编译失败（sqlite 需要 `sqlite_fts5`�
 
 ```bash
 # 单包测试（Ginkgo v2 + Gomega）
-make test PKG=./core/jukebox        # 98 specs
-make test PKG=./server/nativeapi    # 183 specs
-make test PKG=./core/lyrics         # 歌词引擎与翻译缓存测试
+make test PKG=./core/jukebox        # 112 specs
+make test PKG=./server/nativeapi    # 191 specs
+make test PKG=./core/lyrics         # 42 specs（歌词引擎与翻译缓存）
+make test PKG=./core/scrobbler      # 104 specs
 # 等价裸命令
 go test -tags=netgo,sqlite_fts5 ./core/jukebox ./server/nativeapi ./core/lyrics
 
 go build -tags=netgo,sqlite_fts5 -o bin/navidrome .   # main 在仓库根
 make lint          # golangci-lint（配置 .golangci.yml）
-gofmt -l core/jukebox server/nativeapi core/lyrics conf   # 必须无输出
+gofmt -l core server conf scripts   # 必须无输出
 ```
 
 前端（`ui/`，React + react-admin v3 + Vite + Vitest）：
 
 ```bash
 cd ui
-npm run test          # Vitest：89 文件 / 778 用例（单跑歌词：npx vitest run src/audioplayer/TranslateButton.test.jsx）
+npm run test          # Vitest：92 文件 / 804 用例
+# 单跑：npx vitest run src/audioplayer/TranslateButton.test.jsx
+#       npx vitest run src/lyricsTranslation     # 歌词翻译管理页
+#       npx vitest run src/jukebox               # 输出设备控制台与向导
 npm run lint          # ESLint，--max-warnings 0
 npm run check-formatting   # Prettier 只检查不写入；写入用 npm run prettier
 npm run build         # 产物在 ui/build/（被 go:embed 打进二进制）
@@ -73,7 +79,36 @@ docker buildx build --platform linux/amd64 \
   --push .
 ```
 
-改了前端就要 `npm run build` + 重新 `go build`，否则二进制里还是旧界面。
+**推完必须验架构**（macOS 本地验不出来，NAS 上会 `exec format error`）：
+
+```bash
+docker buildx imagetools inspect huhan333/navidrome2all:latest | grep -E "Platform|Digest"
+# 期望 Platform: linux/amd64（unknown/unknown 是 buildx 的 provenance attestation，正常）
+```
+
+冒烟起一次容器确认 UI 已内嵌、版本号注入正确：
+
+```bash
+docker run -d --name nd-smoke -p 14607:4533 huhan333/navidrome2all:latest
+sleep 25 && curl -s -o /dev/null -w '%{http_code}\n' http://localhost:14607/ping
+curl -s http://localhost:14607/app/ | grep -c jukebox
+docker logs nd-smoke 2>&1 | grep -i version   # Version: 0.55.0-fork (bfdd120f)
+docker rm -f nd-smoke
+```
+
+仓库历史被重置过、没有 tag，`GIT_TAG` 只能手写。推送的是**工作区当前状态**，
+不限于已提交内容——发版前先看 `git status --short`。
+
+改了前端就要 `npm run build` + 重新 `go build`，否则二进制里还是旧界面
+（i18n 文案同理，是构建期打包进 bundle 的）。
+
+i18n 除了"三份都要写"，还要查**引用了但语言包里没有**的 key——那种 key 会静默回退到
+代码里的 `_:` 默认值（非默认语言下就表现为界面中英/中英混排），而 `make test-i18n`
+只校验"en 的 key 在翻译包里存在"，查不出这一类：
+
+```bash
+python3 scripts/check-i18n-keys.py     # 期望：0 个 key 缺失
+```
 
 本地跑一个实例（**同一时间只保留一台，一个 URL**）：
 
@@ -225,6 +260,15 @@ Web 端的歌词显示在架构上分为**两层**：
 - 服务器重启后**选中态会重置回浏览器**，前端 `jukebox.js` 靠 `ensureSelected` 补发选择，别去掉。
 - 输出配置持久化在数据库（`core/jukebox/outputs_store.go`），按 `ID` 覆盖 TOML 里的同名条目；
   `ID` 必须是 1-64 位 `[a-zA-Z0-9_-]`。
+- **输出凭据是脱敏往返**：`GET /api/jukebox/outputs` 把 password/token/账号口令换成
+  `SECRET_MASK` 返回；编辑时提交的值若等于掩码，后端理解为"沿用库里原值"而不是
+  写入字面量掩码。别把掩码当真值存回去，也别在前端把它显示给用户。
+- **MPD 扫描有硬边界**：只扫私网 `/24`、最多 32 个并发、每地址 400ms，整体最长约 4s
+  （`discoverMPD({timeout=4})`）。这是为了不让 `/discover/mpd` 变成一个能拖住请求的
+  东西，UI 必须显示 loading + 超时提示，别让用户以为卡死。
+- 输出的 `ID` 留空时按名称生成：ASCII 走 `slugify`（`Living Room MPD` → `living-room-mpd`），
+  纯中文名 `slugify` 拿不到 ASCII，会退化成 `<type>-<短哈希>`（`xiaomi-54hp`）——这是预期
+  行为，不是 bug。生成是**保存时**才发生的，输入框只做预览，见 `docs/risk-notes-optimization.md` §10.3。
 
 **前端与验证**
 - `DeviceSelector` 渲染时即使没打开菜单也会挂载多个隐藏的 `[role=menu]` popover，
@@ -247,6 +291,7 @@ core/jukebox/            本 fork 的播放后端（唯一真源）
   xiaomi_miio.go         miIO 握手与加密
   xiaomi_cloud.go        小米云登录与 MIoT 调用
   discover_dlna.go       SSDP M-SEARCH 扫描 + 描述文档解析
+  discover_mpd.go        MPD 私网 /24 扫描 + 密码探测 + 连通性验证
   outputs_store.go       输出配置的 DB 读写
 core/lyrics/             本 fork 的歌词翻译中枢
   translation.go         TranslationService 单例 / 磁盘缓存 / singleflight / inlineLrc 合成
@@ -258,7 +303,7 @@ core/lyrics/             本 fork 的歌词翻译中枢
 conf/configuration.go    [Jukebox] 段：Enabled（网页多输出端）/ SubsonicEnabled（上游 mpv）/ AdminOnly / Devices / Default / Outputs
 server/nativeapi/
   jukebox.go             /api/jukebox/{devices,status,select,play,control} + 流 URL 生成 + 错误映射
-  jukebox_outputs.go     /api/jukebox/outputs CRUD 与 /discover（admin-only）
+  jukebox_outputs.go     /api/jukebox/outputs CRUD、/discover(DLNA+MPD)、/verify/mpd（admin-only）
   lyrics_translation.go  /api/lyrics/translate 与 /config /test 管理接口
 server/subsonic/
   jukebox.go             上游 Subsonic jukeboxControl（另一套，勿动语义）
@@ -275,12 +320,23 @@ ui/src/lyricsTranslation/
   LyricsTranslation.jsx  独立歌词翻译配置管理页（路由 /lyrics-translation）
 ui/src/layout/
   LyricsTranslationMenu.jsx 侧边栏菜单项
-ui/src/jukebox/          管理 → 输出设备（list/create/edit，**没有 show**）
+ui/src/jukebox/          管理 → 输出设备（自定义卡片页 + 三步向导弹窗，路由 /jukebox-outputs）
+  JukeboxOutputs.jsx     卡片列表、header 新增按钮、移动端 FAB、选择后 dispatch(setOutputDevice)
+  OutputEditorDialog.jsx 三步向导：1.类型卡片 → 2.连接(按类型裁剪) → 3.高级(可选)
+  outputConstants.js     SECRET_MASK / EMPTY_OUTPUT
+ui/src/audioplayer/volume.js  音量换算与限幅纯函数（测试覆盖，禁止再散落 clamp/²）
+ui/src/common/RouteFallback.jsx  懒加载路由的骨架屏兜底
+ui/src/index.css                  .responsive-fields：手机端窄屏防溢出（见第 9 节）
 ui/src/reducers/playerReducer.js   outputDevice 与 bilingualActive/Lyrics 状态与迁移
 ui/src/store/createAdminStore.js   持久化白名单 + 音量 0 兜底
 resources/i18n/*.json    后端 i18n（zh-Hans/zh-Hant 含 jukebox 与翻译文案）
 ui/src/i18n/*.json       前端 i18n
 docs/                    面向人的文档（见第 1 节）
+  risk-notes-optimization.md 本轮优化的风险/验证/回滚/事故记录（改代码先读）
+  handoff-client-integration.md 播放接管集成指南
+scripts/xiaomi_test_server.go 小米假设备（凭据走环境变量，见 scripts/.env.example）
+scripts/validate-translations.sh `make test-i18n` 的实现（校验 36 份语言包与 en.json 的 key 对齐）
+scripts/check-i18n-keys.py     校验"源码引用了但语言包里没有"的 key（单向校验查不出的一类）
 contrib/jukebox-testing/ 假 MPD / 假 DLNA 服务器（不接真设备复现链路）
 .claude/skills/ .qoder/skills/  AI 技能：build-and-test、add-jukebox-driver、jukebox-e2e、nas-jukebox-deploy、lyrics-translation、playback-handoff
 ```
@@ -290,19 +346,57 @@ contrib/jukebox-testing/ 假 MPD / 假 DLNA 服务器（不接真设备复现链
 1. `gofmt -l` 无输出；`make lint` 通过（若只改前端可跳过 Go lint）
 2. `make test PKG=./core/jukebox`、`PKG=./server/nativeapi` 与 `PKG=./core/lyrics` 全绿
 3. `cd ui && npm run test && npm run lint && npm run check-formatting` 全绿
-4. 涉及界面：`npm run build` → `go build` → 重启实例 → **真实登录**后在浏览器（含移动视口）点一遍
-5. 涉及出声链路：确认日志里没有 loopback 告警，且 `/api/jukebox/status` 的
+4. 涉及界面：`npm run build` → **`go build`** → 重启实例 → **真实登录**后在浏览器点一遍。
+   只跑 `npm run build` 不重编二进制，界面还是旧的（UI 由 `go:embed` 打进二进制）
+5. 涉及界面：**必须用 390px 视口再验一次**，
+   `documentElement.scrollWidth === clientWidth` 且无元素 `right > 视口宽度`；
+   浏览器验证前先 `Network.setBypassServiceWorker` + `Network.setCacheDisabled`，
+   否则测的是缓存里的旧 bundle
+6. 涉及出声链路：确认日志里没有 loopback 告警，且 `/api/jukebox/status` 的
    `currentTime/duration/volume` 与设备实际一致
-6. 涉及歌词翻译：验证底栏悬浮歌词与抽屉歌词能同步切换为双语；验证多次切换时使用缓存无多余网络请求；验证空歌词歌曲优雅提示
-7. 新增输出类型：按 `.claude/skills/add-jukebox-driver/SKILL.md` 的清单补齐
-   接口/工厂/配置字段/表单/i18n（**zh-Hans、zh-Hant、en 三处都要**）/文档/测试
-8. 新增翻译引擎：按 `.claude/skills/lyrics-translation/SKILL.md` 的清单补齐
+7. 涉及歌词翻译：验证底栏悬浮歌词与抽屉歌词能同步切换为双语；验证多次切换时使用缓存无多余网络请求；验证空歌词歌曲优雅提示
+8. 新增输出类型：按 `.claude/skills/add-jukebox-driver/SKILL.md` 的清单补齐
+   接口/工厂/配置字段/向导表单（步骤 2 连接 + 步骤 3 高级）/
+   i18n（**zh-Hans、zh-Hant、en 三处都要**，并跑覆盖校验）/
+   自动发现（可选，但强烈建议）/文档/测试
+9. 新增翻译引擎：按 `.claude/skills/lyrics-translation/SKILL.md` 的清单补齐
    Provider/配置字段/表单/i18n/单测
-9. 提交前：`git status --short` 只应剩预期文件；改过 `.gitignore` 时另跑
+10. 提交前：`git status --short` 只应剩预期文件；改过 `.gitignore` 时另跑
    `git diff --diff-filter=D --name-only ee6dd1bc HEAD`，输出必须为空
    （非空说明有上游源文件被忽略规则吃掉了，见第 1 节）。
 
-## 9. 约定
+## 9. 手机端适配（自研页面必读）
+
+上游 react-admin 页面在 390px 下是正常的，**溢出几乎都出自本 fork 的自研页面**。
+根因不是缺媒体查询，而是 `Layout` 是 `min-width: fit-content`：任何后代的
+min-content 超过视口，整页就被撑宽，右侧按钮/文字落到屏幕外（看起来像"被隐藏"）。
+
+七条硬规则：
+
+1. **自研表单页的容器加 `className="responsive-fields"`**。`ui/src/index.css` 里已备好
+   `width:0 + min-width:100%` 的输入控件规则——给控件加 `min-width: 0` **没用**，
+   它不影响 min-content 贡献值。
+2. **穿透 MUI 内部类名的规则只能写进 `ui/src/index.css`**，不能写进 `makeStyles` 的
+   `'& .MuiSelect-select'`——后者在本项目构建下不生成规则（只有伪类生效）。
+3. **不要按固定高度算列表高度**（条目会因标题换行变高），用 `min(按条数算的值, 60vh)`
+   并保留滚动；折叠区加 `unmountOnExit`，否则隐藏内容仍参与宽度计算。
+4. **表格**：`overflow-x: auto` **单独不够**——容器是普通块时 min-content 仍等于表格
+   宽度，必须配 `contain: inline-size`（`.responsive-fields` 里已配好）。
+5. **验收必须复现用户的真实数据状态**：空表格/空列表/未登录态会隐藏一整条代码路径。
+   用户说"还有问题"时，直接去他的实例上量，别在自建等价环境里反复验证。
+
+6. **下拉/选项的文案要短**。Select 的选项宽度会变成控件的 min-content，
+   `Google Gemini (支持 gemini-flash-latest / gemini-flash-lite-latest)` 这种文案
+   会把整页撑到 500+px。详细信息放说明卡片或 helper 文本里。
+7. **验收不能只看"没有溢出元素"**——那可能意味着控件被压到只剩几个字符。
+   还要断言关键控件宽度足够（如 Select > 200px）且文案未被截断
+   （`el.scrollWidth <= el.clientWidth`）。
+
+验收：`document.documentElement.scrollWidth` 必须等于 `clientWidth`，
+且弹窗内没有 `right > 视口宽度` 的元素。完整排查过程见
+`docs/risk-notes-optimization.md` §11。
+
+## 10. 约定
 
 - 提交信息用英文，遵循上游风格（`fix(scanner): ...`、`feat: ...`）。
 - 代码注释只写"为什么"，不写"这行做什么"；文档与注释默认中文（面向本项目使用者）。

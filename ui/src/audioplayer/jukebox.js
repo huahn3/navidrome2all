@@ -55,6 +55,29 @@ export const discoverRenderers = (timeout = 6) =>
     (response) => response.json || [],
   )
 
+// MPD has no discovery protocol, so the server probes the local /24 on its
+// port (6600 by default). Admin-only, and it opens up to 254 short connections.
+export const discoverMPD = ({ timeout = 4, port } = {}) => {
+  const params = [`timeout=${timeout}`]
+  if (port) {
+    params.push(`port=${port}`)
+  }
+  return httpClient(`/api/jukebox/discover/mpd?${params.join('&')}`).then(
+    (response) => response.json || [],
+  )
+}
+
+// Performs a real MPD login so the form can validate before saving. The
+// password only travels to our own server.
+export const verifyMPD = (address, password) => {
+  const headers = new Headers({ 'Content-Type': 'application/json' })
+  return httpClient('/api/jukebox/verify/mpd', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ address, password: password || '' }),
+  }).then((response) => response.json)
+}
+
 export const status = () =>
   httpClient('/api/jukebox/status').then((response) => response.json)
 
