@@ -77,6 +77,7 @@ const Player = () => {
   // The <audio> element gets the squared value, remote outputs get the percent.
   const lastVolumeSentRef = useRef(null)
   const lastVolumeUserChangeRef = useRef(0)
+  const lastReportedVolumeRef = useRef(null)
 
   const { authenticated } = useAuthState()
 
@@ -394,6 +395,27 @@ const Player = () => {
     return () => clearTimeout(timer)
   }, [playerState.volume, remoteActive, notifyRemoteError, translate])
 
+  // Report volume changes to the server so other devices and NowPlaying reflect the updated volume in real time
+  useEffect(() => {
+    const trackId =
+      currentTrackIdRef.current || playerStateRef.current?.current?.trackId
+    if (!trackId || !audioInstance) {
+      return
+    }
+    const volume = Math.min(1, Math.max(0, playerState.volume))
+    const percent = Math.round(volume * 100)
+    if (percent === lastReportedVolumeRef.current) {
+      return
+    }
+    const timer = setTimeout(() => {
+      lastReportedVolumeRef.current = percent
+      const posMs = Math.round((audioInstance.currentTime || 0) * 1000)
+      const state = audioInstance.paused ? 'paused' : 'playing'
+      subsonic.reportPlayback(trackId, posMs, state, getReportExtra())
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [playerState.volume, audioInstance, getReportExtra])
+
   // Inform the server which output is active, and hand the current song over
   // when switching to a remote device mid-playback
   useEffect(() => {
@@ -648,25 +670,19 @@ const Player = () => {
           const posMs = Math.floor(info.currentTime * 1000)
           lastPositionMsRef.current = posMs
           const isNewTrack = info.trackId !== currentTrackId
+          const extra = getReportExtra()
+          if (typeof extra.volume === 'number') {
+            lastReportedVolumeRef.current = extra.volume
+          }
           if (isNewTrack) {
             subsonic
-              .reportPlayback(info.trackId, posMs, 'starting', getReportExtra())
+              .reportPlayback(info.trackId, posMs, 'starting', extra)
               .then(() =>
-                subsonic.reportPlayback(
-                  info.trackId,
-                  posMs,
-                  'playing',
-                  getReportExtra(),
-                ),
+                subsonic.reportPlayback(info.trackId, posMs, 'playing', extra),
               )
             setCurrentTrackId(info.trackId)
           } else {
-            subsonic.reportPlayback(
-              info.trackId,
-              posMs,
-              'playing',
-              getReportExtra(),
-            )
+            subsonic.reportPlayback(info.trackId, posMs, 'playing', extra)
           }
           setHeartbeatTrackId(info.trackId)
         }
@@ -747,12 +763,11 @@ const Player = () => {
       if (!info.isRadio && currentTrackId) {
         const posMs = Math.floor(info.currentTime * 1000)
         lastPositionMsRef.current = posMs
-        subsonic.reportPlayback(
-          currentTrackId,
-          posMs,
-          'paused',
-          getReportExtra(),
-        )
+        const extra = getReportExtra()
+        if (typeof extra.volume === 'number') {
+          lastReportedVolumeRef.current = extra.volume
+        }
+        subsonic.reportPlayback(currentTrackId, posMs, 'paused', extra)
       }
       setHeartbeatTrackId(null)
       lastUserPauseRef.current = Date.now()

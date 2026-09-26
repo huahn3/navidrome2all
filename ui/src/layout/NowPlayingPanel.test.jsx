@@ -504,7 +504,7 @@ describe('<NowPlayingPanel />', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Heartless')).toBeInTheDocument()
-      expect(screen.getByText('🔊 xiaomi_l7a')).toBeInTheDocument()
+      expect(screen.getByText('xiaomi_l7a')).toBeInTheDocument()
       expect(screen.getByText('65%')).toBeInTheDocument()
     })
 
@@ -522,6 +522,30 @@ describe('<NowPlayingPanel />', () => {
           body: expect.stringContaining('"targetOutput":"xiaomi_l7a"'),
         }),
       )
+    })
+  })
+
+  it('toggles closed when button is clicked again', async () => {
+    const store = createMockStore()
+    render(
+      <Provider store={store}>
+        <NowPlayingPanel />
+      </Provider>,
+    )
+
+    await vi.advanceTimersByTimeAsync(500)
+    const button = screen.getByRole('button')
+
+    // Open
+    fireEvent.click(button)
+    await waitFor(() => {
+      expect(screen.getByRole('presentation')).toBeInTheDocument()
+    })
+
+    // Click again to close
+    fireEvent.click(button)
+    await waitFor(() => {
+      expect(screen.queryByRole('presentation')).not.toBeInTheDocument()
     })
   })
 })

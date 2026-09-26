@@ -20,6 +20,7 @@ import {
   Chip,
 } from '@material-ui/core'
 import { FaRegCirclePlay, FaPause, FaPlay } from 'react-icons/fa6'
+import { RiSpeaker2Line } from 'react-icons/ri'
 import subsonic from '../subsonic'
 import httpClient, { clientUniqueId } from '../dataProvider/httpClient'
 import { useInterval } from '../common'
@@ -185,15 +186,21 @@ const useStyles = makeStyles((theme) => ({
   },
   remoteOutputBadge: {
     marginLeft: theme.spacing(0.75),
-    padding: '1px 5px',
+    padding: '1px 6px',
     borderRadius: 3,
     fontSize: '0.625rem',
     fontWeight: 600,
     backgroundColor: theme.palette.secondary.main,
     color: theme.palette.secondary.contrastText,
-    display: 'inline-block',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 3,
     lineHeight: '1.3',
     verticalAlign: 'middle',
+  },
+  speakerIcon: {
+    fontSize: '0.75rem',
+    flexShrink: 0,
   },
   volumeBadge: {
     marginLeft: theme.spacing(0.5),
@@ -258,6 +265,8 @@ const NowPlayingItem = React.memo(
   ({
     nowPlayingEntry,
     deviceNames,
+    currentVolume,
+    outputDevice,
     onLinkClick,
     getArtistLink,
     onTakeover,
@@ -293,11 +302,20 @@ const NowPlayingItem = React.memo(
       (nowPlayingEntry.playerId && nowPlayingEntry.playerId === clientUniqueId)
 
     const displayDevice = formatDeviceName(nowPlayingEntry.playerName)
-    const outputDevice = nowPlayingEntry.outputDevice
-    const isRemoteOutput = Boolean(outputDevice && outputDevice !== 'browser')
+    const effectiveOutputDevice = isCurrent
+      ? outputDevice || nowPlayingEntry.outputDevice
+      : nowPlayingEntry.outputDevice
+    const isRemoteOutput = Boolean(
+      effectiveOutputDevice && effectiveOutputDevice !== 'browser',
+    )
     const outputDeviceName = isRemoteOutput
-      ? (deviceNames && deviceNames[outputDevice]) || outputDevice
+      ? (deviceNames && deviceNames[effectiveOutputDevice]) ||
+        effectiveOutputDevice
       : ''
+    const displayVolume =
+      isCurrent && typeof currentVolume === 'number'
+        ? Math.round(currentVolume * 100)
+        : nowPlayingEntry.volume
 
     const handleItemClick = () => {
       if (isCurrent) return
@@ -393,18 +411,18 @@ const NowPlayingItem = React.memo(
                 className={classes.remoteOutputBadge}
                 title={translate('nowPlaying.remoteOutputDevice') || '输出设备'}
               >
-                {`🔊 ${outputDeviceName}`}
+                <RiSpeaker2Line className={classes.speakerIcon} />
+                <span>{outputDeviceName}</span>
               </span>
             )}
-            {typeof nowPlayingEntry.volume === 'number' &&
-              nowPlayingEntry.volume > 0 && (
-                <span
-                  className={classes.volumeBadge}
-                  title={translate('nowPlaying.volume') || '音量'}
-                >
-                  {`${nowPlayingEntry.volume}%`}
-                </span>
-              )}
+            {typeof displayVolume === 'number' && displayVolume > 0 && (
+              <span
+                className={classes.volumeBadge}
+                title={translate('nowPlaying.volume') || '音量'}
+              >
+                {`${displayVolume}%`}
+              </span>
+            )}
           </Typography>
         </div>
         {isCurrent ? (
@@ -474,6 +492,8 @@ NowPlayingItem.propTypes = {
     bilingual: PropTypes.bool,
   }).isRequired,
   deviceNames: PropTypes.object,
+  currentVolume: PropTypes.number,
+  outputDevice: PropTypes.string,
   onLinkClick: PropTypes.func.isRequired,
   getArtistLink: PropTypes.func.isRequired,
   onTakeover: PropTypes.func.isRequired,
@@ -488,11 +508,11 @@ const NowPlayingList = React.memo(
     onClose,
     entries,
     deviceNames,
+    currentVolume,
+    outputDevice,
     onLinkClick,
     getArtistLink,
     onTakeover,
-    onMouseEnter,
-    onMouseLeave,
     now,
   }) => {
     const classes = useStyles({ entryCount: entries.length })
@@ -507,10 +527,6 @@ const NowPlayingList = React.memo(
         open={open}
         onClose={onClose}
         aria-labelledby="now-playing-title"
-        PaperProps={{
-          onMouseEnter,
-          onMouseLeave,
-        }}
       >
         <Card className={classes.card}>
           <CardContent className={classes.cardContent}>
@@ -529,6 +545,8 @@ const NowPlayingList = React.memo(
                     key={`${nowPlayingEntry.sessionId || nowPlayingEntry.playerId || ''}-${nowPlayingEntry.username}-${nowPlayingEntry.playerName}-${nowPlayingEntry.id || nowPlayingEntry.songId || nowPlayingEntry.title}`}
                     nowPlayingEntry={nowPlayingEntry}
                     deviceNames={deviceNames}
+                    currentVolume={currentVolume}
+                    outputDevice={outputDevice}
                     onLinkClick={onLinkClick}
                     getArtistLink={getArtistLink}
                     onTakeover={onTakeover}
@@ -552,11 +570,11 @@ NowPlayingList.propTypes = {
   onClose: PropTypes.func.isRequired,
   entries: PropTypes.arrayOf(PropTypes.object).isRequired,
   deviceNames: PropTypes.object,
+  currentVolume: PropTypes.number,
+  outputDevice: PropTypes.string,
   onLinkClick: PropTypes.func.isRequired,
   getArtistLink: PropTypes.func.isRequired,
   onTakeover: PropTypes.func.isRequired,
-  onMouseEnter: PropTypes.func,
-  onMouseLeave: PropTypes.func,
   now: PropTypes.number.isRequired,
 }
 
@@ -571,6 +589,7 @@ const NowPlayingPanel = () => {
   const serverUp = useSelector(
     (state) => !!state.activity.serverStart.startTime,
   )
+  const currentVolume = useSelector((state) => state.player?.volume)
   const outputDevice =
     useSelector((state) => state.player?.outputDevice) || 'browser'
   const translate = useTranslate()
@@ -583,8 +602,6 @@ const NowPlayingPanel = () => {
   const [deviceNames, setDeviceNames] = useState({})
   const [now, setNow] = useState(Date.now())
   const open = Boolean(anchorEl)
-  const hoverTimeoutRef = useRef(null)
-  const isClickOpenRef = useRef(false)
 
   const loadDeviceNames = useCallback(() => {
     if (config.jukeboxEnabled) {
@@ -605,47 +622,21 @@ const NowPlayingPanel = () => {
     loadDeviceNames()
   }, [loadDeviceNames])
 
-  const clearHoverTimeout = useCallback(() => {
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current)
-      hoverTimeoutRef.current = null
-    }
-  }, [])
-
-  const handleMouseEnter = useCallback(
+  const handleToggle = useCallback(
     (event) => {
-      clearHoverTimeout()
       const target = event.currentTarget
-      hoverTimeoutRef.current = setTimeout(() => {
-        setAnchorEl(target)
-      }, 150)
+      setAnchorEl((prev) => {
+        if (prev) return null
+        loadDeviceNames()
+        return target
+      })
     },
-    [clearHoverTimeout],
-  )
-
-  const handleMouseLeave = useCallback(() => {
-    clearHoverTimeout()
-    if (isClickOpenRef.current) return
-    hoverTimeoutRef.current = setTimeout(() => {
-      setAnchorEl(null)
-    }, 280)
-  }, [clearHoverTimeout])
-
-  const handleMenuOpen = useCallback(
-    (event) => {
-      clearHoverTimeout()
-      isClickOpenRef.current = true
-      setAnchorEl(event.currentTarget)
-      loadDeviceNames()
-    },
-    [clearHoverTimeout, loadDeviceNames],
+    [loadDeviceNames],
   )
 
   const handleMenuClose = useCallback(() => {
-    clearHoverTimeout()
-    isClickOpenRef.current = false
     setAnchorEl(null)
-  }, [clearHoverTimeout])
+  }, [])
 
   // Close panel when link is clicked on small screens
   const handleLinkClick = useCallback(() => {
@@ -800,7 +791,6 @@ const NowPlayingPanel = () => {
   useEffect(() => {
     return () => {
       if (fetchTimerRef.current) clearTimeout(fetchTimerRef.current)
-      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
     }
   }, [])
 
@@ -836,24 +826,20 @@ const NowPlayingPanel = () => {
   )
 
   return (
-    <div
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      style={{ display: 'inline-flex' }}
-    >
-      <NowPlayingButton count={count} onClick={handleMenuOpen} />
+    <div style={{ display: 'inline-flex' }}>
+      <NowPlayingButton count={count} onClick={handleToggle} />
       <NowPlayingList
         anchorEl={anchorEl}
         open={open}
         onClose={handleMenuClose}
         entries={entries}
         deviceNames={deviceNames}
+        currentVolume={currentVolume}
+        outputDevice={outputDevice}
         now={now}
         onLinkClick={handleLinkClick}
         getArtistLink={getArtistLink}
         onTakeover={handleTakeover}
-        onMouseEnter={clearHoverTimeout}
-        onMouseLeave={handleMouseLeave}
       />
     </div>
   )
