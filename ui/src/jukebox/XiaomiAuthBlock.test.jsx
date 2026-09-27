@@ -75,10 +75,9 @@ describe('<XiaomiAuthBlock />', () => {
     await waitFor(() => {
       expect(screen.getByText('Redmi小爱音箱Play')).toBeInTheDocument()
     })
-    expect(screen.getByText('选用此音箱')).toBeInTheDocument()
-
-    // Click "选用此音箱"
-    fireEvent.click(screen.getByText('选用此音箱'))
+    // 勾选即预填：不再有单独的「选用此音箱」按钮
+    expect(screen.queryByText('选用此音箱')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('选择 Redmi小爱音箱Play'))
 
     // Verify form.change was called for speaker configuration
     expect(mockChange).toHaveBeenCalledWith('name', 'Redmi小爱音箱Play')
@@ -93,17 +92,9 @@ describe('<XiaomiAuthBlock />', () => {
     expect(mockChange).toHaveBeenCalledWith('passToken', 'V1:testtoken')
     expect(mockChange).toHaveBeenCalledWith('id', 'xiaomi_l7a')
   })
-  it('adds several checked speakers as outputs in one go', async () => {
-    const post = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) })
-    const get = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url, opts) =>
-        opts?.method === 'POST' ? post(url, opts) : get(url, opts),
-      ),
-    )
-    const onBatchCreated = vi.fn()
-
+  it('keeps multi-select working and reports every checked device', async () => {
+    // 勾选不再直接创建输出设备：职责交给向导的第 3 步（逐台填表后统一提交）
+    const onSelectionChange = vi.fn()
     vi.spyOn(jukeboxApi, 'loginXiaomiPassToken').mockResolvedValueOnce({
       status: 'success',
       userId: '1250258297',
@@ -132,7 +123,7 @@ describe('<XiaomiAuthBlock />', () => {
       <XiaomiAuthBlock
         formData={{ type: 'xiaomi' }}
         isCreate={true}
-        onBatchCreated={onBatchCreated}
+        onSelectionChange={onSelectionChange}
       />,
     )
 
@@ -146,56 +137,77 @@ describe('<XiaomiAuthBlock />', () => {
       expect(screen.getByText('小爱同学一代')).toBeInTheDocument(),
     )
 
-    // Nothing selected yet: the batch button stays disabled.
+    // 批量创建按钮已经没有了：勾选只负责选择，创建由向导提交
     expect(
-      screen.getByRole('button', { name: '添加所选 0 台为输出设备' }),
-    ).toBeDisabled()
+      screen.queryByRole('button', { name: /添加所选 \d+ 台为输出设备/ }),
+    ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByLabelText('选择 小爱同学一代'))
     fireEvent.click(screen.getByLabelText('选择 Redmi小爱音箱Play'))
-    expect(
-      screen.getByRole('button', { name: '添加所选 2 台为输出设备' }),
-    ).toBeEnabled()
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '添加所选 2 台为输出设备' }),
-    )
+    // 两台都在，且都已勾上（"只能勾选一个"是这个 bug）
+    expect(screen.getByLabelText('选择 小爱同学一代')).toBeChecked()
+    expect(screen.getByLabelText('选择 Redmi小爱音箱Play')).toBeChecked()
+    expect(screen.getByText('已选 2 台')).toBeInTheDocument()
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
-    const bodies = post.mock.calls.map(([, opts]) => JSON.parse(opts.body))
-    expect(bodies.map((b) => b.address)).toEqual([
-      '192.168.31.142',
-      '192.168.31.232',
-    ])
-    expect(bodies[0]).toMatchObject({
-      type: 'xiaomi',
-      did: 'd1',
-      model: 's12',
-      account: '1250258297',
+    // 父组件拿到了两台，第 3 步据此渲染两份表单
+    await waitFor(() => {
+      const last = onSelectionChange.mock.calls.at(-1)?.[0] || []
+      expect(last.map((d) => d.did)).toEqual(['d1', 'd2'])
     })
-    // Names are Chinese, so the id falls back to the <type>-<hash> form and must stay unique
-    expect(new Set(bodies.map((b) => b.id)).size).toBe(2)
-    await waitFor(() => expect(onBatchCreated).toHaveBeenCalled())
-    expect(onBatchCreated.mock.calls[0][0].created).toHaveLength(2)
-    expect(screen.getByText(/已添加 2 台输出设备/)).toBeInTheDocument()
   })
 
-  it('reports per-device failures and keeps the dialog data', async () => {
-    const post = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
-      .mockResolvedValueOnce({
-        ok: false,
-        text: async () => 'an output with this id already exists',
-      })
-    const get = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url, opts) =>
-        opts?.method === 'POST' ? post(url, opts) : get(url, opts),
-      ),
+  it('lets offline speakers be checked but flags their placeholder IP', async () => {
+    // 离线设备的小米云会回 0.0.0.1。以前直接禁掉勾选框，结果"只能勾选一台"；
+    // 现在允许勾选（用户自己知道真实 IP），但列表标注"需手填"且不预填地址。
+    const mockChange2 = vi.fn()
+    vi.doMock('react-final-form', async () => ({
+      ...(await vi.importActual('react-final-form')),
+      useForm: () => ({ change: mockChange2 }),
+    }))
+    vi.spyOn(jukeboxApi, 'loginXiaomiPassToken').mockResolvedValueOnce({
+      status: 'success',
+      userId: '1',
+      passToken: 'V1:t',
+      devices: [
+        {
+          did: 'd1',
+          name: '离线音箱',
+          model: 'xiaomi.wifispeaker.l7a',
+          localip: '0.0.0.1',
+          isOnline: false,
+          token: 'tk1',
+        },
+      ],
+    })
+
+    render(<XiaomiAuthBlock formData={{ type: 'xiaomi' }} isCreate={true} />)
+    fireEvent.click(screen.getByText('passToken 凭证直填'))
+    const inputs = screen.getAllByRole('textbox')
+    fireEvent.change(inputs[0], { target: { value: '1' } })
+    fireEvent.change(inputs[1], { target: { value: 'V1:t' } })
+    fireEvent.click(screen.getByText('校验凭证并读取设备列表'))
+
+    await waitFor(() =>
+      expect(screen.getByText('离线音箱')).toBeInTheDocument(),
     )
-    const onBatchCreated = vi.fn()
+    // 可以勾选了
+    expect(screen.getByLabelText('选择 离线音箱')).toBeEnabled()
+    // 并且明确标出来源
+    expect(screen.getByText('局域网 IP: 未知，需手填')).toBeInTheDocument()
+  })
+
+  it('never creates an output on its own: no bare fetch, no create call', async () => {
+    // 回归：批量创建曾用裸 fetch（没有 X-ND-Authorization），后端一律 401
+    // Not authenticated，表现为"已添加 0 台，N 台失败"。
+    // 现在这个块只负责**选择**，创建一律由向导第 3 步提交，所以这里断言
+    // 勾选过程中一次请求都不该发出。
+    const bareFetch = vi.fn(() => {
+      throw new Error('raw fetch must not be used for the jukebox outputs API')
+    })
+    vi.stubGlobal('fetch', bareFetch)
+    const createJukeboxOutput = vi.spyOn(jukeboxApi, 'createJukeboxOutput')
+    const listJukeboxOutputs = vi.spyOn(jukeboxApi, 'listJukeboxOutputs')
 
     vi.spyOn(jukeboxApi, 'loginXiaomiPassToken').mockResolvedValueOnce({
       status: 'success',
@@ -209,23 +221,10 @@ describe('<XiaomiAuthBlock />', () => {
           localip: '192.168.31.1',
           token: 'tk1',
         },
-        {
-          did: 'd2',
-          name: '音箱乙',
-          model: 'xiaomi.wifispeaker.l7a',
-          localip: '192.168.31.2',
-          token: 'tk2',
-        },
       ],
     })
 
-    render(
-      <XiaomiAuthBlock
-        formData={{ type: 'xiaomi' }}
-        isCreate={true}
-        onBatchCreated={onBatchCreated}
-      />,
-    )
+    render(<XiaomiAuthBlock formData={{ type: 'xiaomi' }} isCreate={true} />)
     fireEvent.click(screen.getByText('passToken 凭证直填'))
     const inputs = screen.getAllByRole('textbox')
     fireEvent.change(inputs[0], { target: { value: '1' } })
@@ -233,16 +232,61 @@ describe('<XiaomiAuthBlock />', () => {
     fireEvent.click(screen.getByText('校验凭证并读取设备列表'))
     await waitFor(() => expect(screen.getByText('音箱甲')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByRole('button', { name: '全选' }))
-    fireEvent.click(
-      screen.getByRole('button', { name: '添加所选 2 台为输出设备' }),
+    fireEvent.click(screen.getByLabelText('选择 音箱甲'))
+    await waitFor(() =>
+      expect(screen.getByText('已选 1 台')).toBeInTheDocument(),
     )
 
-    await waitFor(() => expect(onBatchCreated).toHaveBeenCalled())
-    const { created, failed } = onBatchCreated.mock.calls[0][0]
-    expect(created).toHaveLength(1)
-    expect(failed).toHaveLength(1)
-    expect(screen.getByText(/1 台失败/)).toBeInTheDocument()
+    expect(bareFetch).not.toHaveBeenCalled()
+    expect(createJukeboxOutput).not.toHaveBeenCalled()
+    expect(listJukeboxOutputs).not.toHaveBeenCalled()
+  })
+
+  it('prefills the form as soon as a speaker is checked', async () => {
+    // 回归：以前要点「选用此音箱」才填表，勾选本身没反应，
+    // 于是勾完直接点"下一步"看到的是空表单
+    vi.spyOn(jukeboxApi, 'loginXiaomiPassToken').mockResolvedValueOnce({
+      status: 'success',
+      userId: '1250258297',
+      passToken: 'V1:testtoken',
+      devices: [
+        {
+          did: 'd1',
+          name: '音箱甲',
+          model: 'xiaomi.wifispeaker.s12',
+          localip: '192.168.31.142',
+          token: 'tk1',
+        },
+        {
+          did: 'd2',
+          name: '音箱乙',
+          model: 'xiaomi.wifispeaker.l7a',
+          localip: '192.168.31.232',
+          token: 'tk2',
+        },
+      ],
+    })
+
+    render(<XiaomiAuthBlock formData={{ type: 'xiaomi' }} isCreate={true} />)
+    fireEvent.click(screen.getByText('passToken 凭证直填'))
+    const inputs = screen.getAllByRole('textbox')
+    fireEvent.change(inputs[0], { target: { value: '1' } })
+    fireEvent.change(inputs[1], { target: { value: 'V1:t' } })
+    fireEvent.click(screen.getByText('校验凭证并读取设备列表'))
+    await waitFor(() => expect(screen.getByText('音箱甲')).toBeInTheDocument())
+
+    mockChange.mockClear()
+    fireEvent.click(screen.getByLabelText('选择 音箱甲'))
+    expect(mockChange).toHaveBeenCalledWith('name', '音箱甲')
+    expect(mockChange).toHaveBeenCalledWith('address', '192.168.31.142')
+    expect(mockChange).toHaveBeenCalledWith('did', 'd1')
+
+    // 取消勾选后改用剩下的第一台预填，表单不留在已取消的设备上
+    mockChange.mockClear()
+    fireEvent.click(screen.getByLabelText('选择 音箱甲'))
+    fireEvent.click(screen.getByLabelText('选择 音箱乙'))
+    expect(mockChange).toHaveBeenCalledWith('name', '音箱乙')
+    expect(mockChange).toHaveBeenCalledWith('address', '192.168.31.232')
   })
 
   it('does not offer devices without a local IP', async () => {

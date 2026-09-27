@@ -186,12 +186,19 @@ func (api *Router) GetLyricsBySongId(r *http.Request) (*responses.Subsonic, erro
 			for i := range structuredLyrics {
 				if structuredLyrics[i].IsMainKind() {
 					for j := range structuredLyrics[i].Line {
-						if j < len(trans.Lines) && trans.Lines[j].Translation != "" {
-							structuredLyrics[i].Line[j].Value += "\n" + trans.Lines[j].Translation
+						if j >= len(trans.Lines) {
+							continue
 						}
+						// 译文与原文相同时不要拼进去，否则同一句会显示两遍
+						// （引擎对专有名词/纯外文歌词常原样返回）。
+						tr := strings.TrimSpace(trans.Lines[j].Translation)
+						if tr == "" || tr == strings.TrimSpace(structuredLyrics[i].Line[j].Value) {
+							continue
+						}
+						structuredLyrics[i].Line[j].Value += "\n" + tr
 					}
-					break
 				}
+				break
 			}
 		} else {
 			transLines := make([]model.Line, len(trans.Lines))

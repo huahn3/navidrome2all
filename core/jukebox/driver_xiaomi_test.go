@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/navidrome/navidrome/conf"
@@ -648,3 +649,37 @@ var _ = Describe("xiaomiDriver", func() {
 		})
 	})
 })
+
+// 回归：passport API 的 desc 是自由文本，会被内插进错误；而驱动错误
+// 在 nativeapi 里是原样回给客户端的（jukeboxDriverError），所以上游一旦
+// 回显 passToken/密码，就会进到 HTTP 响应和日志里。
+func TestXiaomiCloudClient_ScrubRemovesOwnSecrets(t *testing.T) {
+	const passToken = "0123456789abcdef0123456789abcdef"
+	const password = "sup3rsecretpw"
+
+	c := newXiaomiCloudClient("me@example.com", password)
+	c.passToken = passToken
+	c.cookies["serviceToken"] = "service-token-value-1234"
+
+	msg := "invalid credential: passToken=" + passToken + " password=" + password +
+		" serviceToken=service-token-value-1234"
+	got := c.scrub(msg)
+
+	for _, secret := range []string{passToken, password, "service-token-value-1234"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("secret %q survived scrubbing: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "[redacted]") {
+		t.Fatalf("expected redaction markers, got %s", got)
+	}
+	// userId 这类标识符不该被当成密钥抹掉
+	if got := c.scrub("userId=12345 rejected"); got != "userId=12345 rejected" {
+		t.Fatalf("non-secret text was altered: %s", got)
+	}
+	// 长度必须有界，防止上游用超长 desc 灌日志
+	long := c.scrub(strings.Repeat("a", 500))
+	if len(long) > 210 {
+		t.Fatalf("scrubbed message is %d chars, expected it to be bounded", len(long))
+	}
+}

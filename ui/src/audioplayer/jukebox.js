@@ -33,6 +33,31 @@ export const selectDevice = (deviceId) => {
   )
 }
 
+// fetchJson rejects with an HttpError carrying {status, body}. The body is
+// whatever the server sent (plain text from http.Error, JSON from RespondWithError),
+// so flatten it to something a human can read in a list of per-device failures.
+const describeRequestError = (e) => {
+  const status = e?.status
+  const body = e?.body
+  const detail =
+    typeof body === 'string'
+      ? body
+      : body?.error || body?.message || e?.message || ''
+  const text = String(detail).trim()
+  if (!text) {
+    return status ? `HTTP ${status}` : '请求失败'
+  }
+  return status ? `HTTP ${status}: ${text}` : text
+}
+
+export const listJukeboxOutputs = () =>
+  httpClient('/api/jukebox/outputs').then((response) => response.json)
+
+export const createJukeboxOutput = (device) =>
+  postJSON('/api/jukebox/outputs', device)
+
+export { describeRequestError }
+
 const ensureSelected = (deviceId) =>
   selectedOnServer === deviceId ? Promise.resolve() : selectDevice(deviceId)
 

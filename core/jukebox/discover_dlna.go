@@ -108,7 +108,7 @@ type packetReader interface {
 // collectRenderers reads SSDP replies until the deadline passes, keeping one
 // entry per device: a renderer answers every search target (and each of its
 // embedded services) separately, so the same location shows up many times.
-func collectRenderers(ctx context.Context, conn packetReader, describe func(string) (string, string, error)) []DiscoveredRenderer {
+func collectRenderers(ctx context.Context, conn packetReader, describe func(context.Context, string) (string, string, error)) []DiscoveredRenderer {
 	seen := map[string]DiscoveredRenderer{}
 	buf := make([]byte, 8192)
 	for {
@@ -133,7 +133,7 @@ func collectRenderers(ctx context.Context, conn packetReader, describe func(stri
 			continue
 		}
 		renderer := DiscoveredRenderer{USN: resp["usn"], Address: location}
-		if name, model, err := describe(location); err == nil {
+		if name, model, err := describe(ctx, location); err == nil {
 			renderer.Name = name
 			renderer.Model = model
 		} else {
@@ -178,9 +178,22 @@ func parseSSDPResponse(raw string) map[string]string {
 
 // describeRenderer fetches the device description document and extracts the
 // friendly name and model to show in the discovery results.
-func describeRenderer(location string) (name, model string, err error) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(location) //nolint:gosec,noctx
+//
+// The LOCATION header comes from an unauthenticated UDP packet, so it is
+// attacker-controlled input: without the checks below any host on the LAN (or
+// anyone who can send multicast traffic) could make the server fetch internal
+// endpoints such as the cloud metadata service, and the extracted friendly
+// name is then echoed back in the discovery results.
+func describeRenderer(ctx context.Context, location string) (name, model string, err error) {
+	client, err := rendererHTTPClient(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
+	if err != nil {
+		return "", "", err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", err
 	}
@@ -202,4 +215,57 @@ func describeRenderer(location string) (name, model string, err error) {
 		return "", "", err
 	}
 	return desc.Device.FriendlyName, desc.Device.ModelName, nil
+}
+
+// rendererHTTPClient builds a client that only reaches LAN addresses, and
+// re-validates every address at dial time so a DNS name that resolves to a
+// public/internal address cannot slip through (DNS rebinding).
+func rendererHTTPClient(ctx context.Context) (*http.Client, error) {
+	dialer := &net.Dialer{Timeout: 3 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			var lastErr error
+			for _, ip := range ips {
+				if !isLANAddress(ip.IP) {
+					lastErr = fmt.Errorf("refusing to reach non-LAN address %s", ip.IP)
+					continue
+				}
+				conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+				if err == nil {
+					return conn, nil
+				}
+				lastErr = err
+			}
+			if lastErr == nil {
+				lastErr = fmt.Errorf("no usable address for %s", host)
+			}
+			return nil, lastErr
+		},
+		DisableKeepAlives: true,
+	}
+	// 总时长由 ctx（discovery timeout）兜底：每台设备 5s × N 台会把
+	// /discover 拖成分钟级，而请求是要占着 manager 锁的
+	return &http.Client{Transport: transport, Timeout: 5 * time.Second}, nil
+}
+
+// isLANAddress reports whether ip is a private address a DLNA renderer may
+// legitimately live on. Link-local (169.254.0.0/16) is excluded on purpose:
+// that is where cloud instance metadata services live, and no renderer uses it.
+func isLANAddress(ip net.IP) bool {
+	if ip == nil || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	if ip.IsLinkLocalUnicast() {
+		// 169.254.0.0/16 是云实例元数据服务的地址段，没有渲染器会用它
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -29,11 +28,11 @@ func (p *GoogleProvider) Translate(ctx context.Context, lines []string, targetLa
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("google translate request: %w", err)
+		return nil, fmt.Errorf("google translate request: %w", sanitizeURLError(err))
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readLimited(resp, maxResponseBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading google response: %w", err)
 	}

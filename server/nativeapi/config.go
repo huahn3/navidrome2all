@@ -31,6 +31,15 @@ var sensitiveFieldsFullMask = []string{
 	"DevAutoCreateAdminPassword",
 	"PasswordEncryptionKey",
 	"Prometheus.Password",
+	// 本 fork 的多输出端凭据：MPD 口令、小米设备 token / passToken / 账号
+	"Jukebox.Outputs.Password",
+	"Jukebox.Outputs.Token",
+	"Jukebox.Outputs.PassToken",
+	"Jukebox.Outputs.Account",
+	// 歌词翻译引擎密钥与可能内嵌账号口令的代理地址
+	"LyricsTranslation.apiKey",
+	"LyricsTranslation.secretKey",
+	"LyricsTranslation.proxyUrl",
 }
 
 type configResponse struct {
@@ -77,6 +86,15 @@ func applySensitiveFieldMasking(ctx context.Context, config map[string]any, pref
 		case map[string]any:
 			// Recursively process nested maps
 			applySensitiveFieldMasking(ctx, v, fullKey)
+		case []any:
+			// Recursively process slices. Without this, credentials inside
+			// Jukebox.Outputs (a list) were returned to the client verbatim.
+			for i, item := range v {
+				if child, ok := item.(map[string]any); ok {
+					applySensitiveFieldMasking(ctx, child, fullKey)
+					v[i] = child
+				}
+			}
 		case string:
 			// Apply masking to string values
 			config[key] = redactValue(fullKey, v)

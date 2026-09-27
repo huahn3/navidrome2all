@@ -109,6 +109,61 @@ var _ = Describe("Config API", func() {
 				Expect(prometheus["Password"]).To(Equal("****"))
 			})
 
+			It("redacts jukebox output credentials and lyrics engine keys", func() {
+				// 回归：Jukebox.Outputs 是列表，掩码遍历器以前只递归 map，
+				// 于是列表里每一项的 MPD 口令 / 小米 token 都原样返回给了前端。
+				conf.Server.Jukebox.Outputs = []conf.JukeboxOutputDevice{{
+					ID: "mpd-nas", Name: "MPD", Type: "mpd",
+					Address: "192.168.1.10:6600", Password: "mpdsecret",
+					Token:     "00112233445566778899aabbccddeeff",
+					PassToken: "passtoken123", Account: "me@example.com",
+				}}
+				conf.Server.LyricsTranslation.ApiKey = "gemini-secret-key"
+				conf.Server.LyricsTranslation.SecretKey = "baidu-secret"
+				conf.Server.LyricsTranslation.ProxyURL = "http://user:pw@proxy:8080"
+
+				req := createAuthenticatedConfigRequest(adminToken)
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+
+				Expect(w.Code).To(Equal(http.StatusOK))
+				var resp configResponse
+				Expect(json.Unmarshal(w.Body.Bytes(), &resp)).To(Succeed())
+
+				serialized, err := json.Marshal(resp.Config)
+				Expect(err).ToNot(HaveOccurred())
+				body := string(serialized)
+				for _, secret := range []string{
+					"mpdsecret",
+					"00112233445566778899aabbccddeeff",
+					"passtoken123",
+					"me@example.com",
+					"gemini-secret-key",
+					"baidu-secret",
+					"user:pw@proxy",
+				} {
+					Expect(body).ToNot(ContainSubstring(secret), "credential %q leaked", secret)
+				}
+
+				jukebox, ok := resp.Config["Jukebox"].(map[string]any)
+				Expect(ok).To(BeTrue())
+				outputs, ok := jukebox["Outputs"].([]any)
+				Expect(ok).To(BeTrue())
+				Expect(outputs).To(HaveLen(1))
+				out, ok := outputs[0].(map[string]any)
+				Expect(ok).To(BeTrue())
+				// 非敏感字段必须原样保留，否则前端没法回显配置
+				Expect(out["Address"]).To(Equal("192.168.1.10:6600"))
+				Expect(out["Password"]).To(Equal("****"))
+				Expect(out["Token"]).To(Equal("****"))
+
+				lyrics, ok := resp.Config["LyricsTranslation"].(map[string]any)
+				Expect(ok).To(BeTrue())
+				Expect(lyrics["apiKey"]).To(Equal("****"))
+				// LyricsTranslationOptions 带 json tag，所以键名是小写
+				Expect(lyrics["engine"]).To(Equal(conf.Server.LyricsTranslation.Engine))
+			})
+
 			It("handles empty sensitive values", func() {
 				conf.Server.LastFM.ApiKey = ""
 				conf.Server.PasswordEncryptionKey = ""

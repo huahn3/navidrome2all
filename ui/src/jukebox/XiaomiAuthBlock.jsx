@@ -9,7 +9,6 @@ import Divider from '@material-ui/core/Divider'
 import Link from '@material-ui/core/Link'
 import List from '@material-ui/core/List'
 import ListItem from '@material-ui/core/ListItem'
-import ListItemSecondaryAction from '@material-ui/core/ListItemSecondaryAction'
 import ListItemText from '@material-ui/core/ListItemText'
 import Alert from '@material-ui/lab/Alert'
 import Checkbox from '@material-ui/core/Checkbox'
@@ -34,7 +33,6 @@ import {
   loginXiaomiPassword,
   loginXiaomiPassToken,
 } from '../audioplayer/jukebox'
-import { uniqueOutputId } from './outputConstants'
 
 const useStyles = makeStyles((theme) => ({
   batchBar: {
@@ -190,25 +188,33 @@ const isXiaomiSpeaker = (model = '') => {
   )
 }
 
-// 没有局域网 IP 的设备没法当输出用（驱动靠 IP 控制/拉流）
-const isUsableDevice = (dev) => Boolean(dev?.localip)
+// 没有局域网 IP 的设备完全没法当输出用（驱动靠 IP 控制/拉流）。
+const hasLocalIP = (dev) => Boolean(dev?.localip)
+
+// 离线设备的小米云会回 0.0.0.1 这种占位地址：它连不上，但仍**允许勾选**，
+// 因为用户自己知道音箱在局域网里的真实 IP（禁掉的话"只能勾选一台"，
+// 而用户往往就是想批量把好几台音箱都加上）。区别只是表单里不预填地址、
+// 要用户手填；真填不出来的话提交校验会拦住。
+const isPlaceholderIP = (ip) => /^0\.0\.0\.\d*$/.test(ip || '')
+const needsManualAddress = (dev) =>
+  Boolean(dev?.localip) && isPlaceholderIP(dev.localip)
+
+const isUsableDevice = hasLocalIP
 
 const usableDids = (list) =>
   (list || []).filter(isUsableDevice).map((d) => d.did)
 
-const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
+const XiaomiAuthBlock = ({ formData, isCreate, onSelectionChange }) => {
   const classes = useStyles()
   const form = useForm()
 
   const [tab, setTab] = useState(0) // 0: 扫码, 1: 密码, 2: passToken
   const [authResult, setAuthResult] = useState(null) // { userId, passToken, devices: [] }
-  const [appliedDevice, setAppliedDevice] = useState(null)
   const [showOtherDevices, setShowOtherDevices] = useState(false)
   // 批量添加：勾选的设备 DID、已创建成功的 DID、创建过程与结果
   const [selectedDids, setSelectedDids] = useState([])
-  const [createdDids, setCreatedDids] = useState([])
-  const [batchBusy, setBatchBusy] = useState(false)
-  const [batchResult, setBatchResult] = useState(null)
+  // 当前表单是由哪台设备预填的：取消勾选它时要决定回退到哪一台
+  const prefilledDidRef = useRef(null)
 
   // QR state
   const [qrInfo, setQrInfo] = useState(null)
@@ -351,9 +357,14 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
   }, [authResult])
 
   // Device pick handler
-  const handlePickDevice = useCallback(
-    (dev) => () => {
-      if (dev.localip) form.change('address', dev.localip)
+  // 把一台设备预填进表单。字段只是**预填**，用户进下一步后照常可以改。
+  const prefillFromDevice = useCallback(
+    (dev) => {
+      if (!dev) return
+      // 0.0.0.x 是小米云给离线设备回的占位地址，预填进去只会让用户以为填好了
+      if (dev.localip && !isPlaceholderIP(dev.localip)) {
+        form.change('address', dev.localip)
+      }
       if (dev.name) form.change('name', dev.name)
       if (dev.token) form.change('token', dev.token)
       if (dev.did) form.change('did', dev.did)
@@ -372,8 +383,6 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
           : dev.did || 'speaker'
         form.change('id', `xiaomi_${suffix}`)
       }
-
-      setAppliedDevice(dev.did)
     },
     [authResult, form, formData.id, isCreate],
   )
@@ -388,91 +397,64 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
     [devices],
   )
 
-  const toggleDevice = useCallback((did) => {
-    setSelectedDids((prev) =>
-      prev.includes(did) ? prev.filter((d) => d !== did) : [...prev, did],
-    )
-  }, [])
-
-  const isCreated = useCallback(
-    (did) => createdDids.includes(did),
-    [createdDids],
+  // 勾选即预填：进下一步时名称/ID/地址已经是填好的，用户可以照着改。
+  // 取消勾选时如果这台正是预填的来源，就改用剩下的第一台，避免表单留着一台
+  // 已经被取消勾选的设备信息。
+  const toggleDevice = useCallback(
+    (did) => {
+      setSelectedDids((prev) => {
+        const wasSelected = prev.includes(did)
+        const next = wasSelected
+          ? prev.filter((d) => d !== did)
+          : [...prev, did]
+        if (!wasSelected) {
+          const dev = devices.find((d) => d.did === did)
+          prefillFromDevice(dev)
+          prefilledDidRef.current = did
+        } else if (prefilledDidRef.current === did) {
+          const fallback = devices.find(
+            (d) => next.includes(d.did) && d.did !== did,
+          )
+          if (fallback) {
+            prefillFromDevice(fallback)
+            prefilledDidRef.current = fallback.did
+          } else {
+            prefilledDidRef.current = null
+          }
+        }
+        return next
+      })
+    },
+    [devices, prefillFromDevice],
   )
+
+  // 把当前勾选的设备交给向导：下一步要为**每一台**渲染一份名称/ID/地址表单，
+  // 所以父组件需要知道现在选中了谁。
+  const selectedDevices = useMemo(
+    () => devices.filter((d) => selectedDids.includes(d.did)),
+    [devices, selectedDids],
+  )
+  const onSelectionChangeRef = useRef(onSelectionChange)
+  onSelectionChangeRef.current = onSelectionChange
+  useEffect(() => {
+    onSelectionChangeRef.current?.(selectedDevices)
+  }, [selectedDevices])
 
   const toggleSelectAll = useCallback(() => {
     setSelectedDids((prev) => {
       const all = usableDids(speakerDevices)
-      return prev.length === all.length ? [] : all
+      if (prev.length === all.length) {
+        prefilledDidRef.current = null
+        return []
+      }
+      const first = speakerDevices.find((d) => all.includes(d.did))
+      if (first) {
+        prefillFromDevice(first)
+        prefilledDidRef.current = first.did
+      }
+      return all
     })
-  }, [speakerDevices])
-
-  // 一次登录常常能检索到十几台设备，逐台"选用此音箱"要点几十次。这里允许勾选多台，
-  // 一次性建成多个输出设备——每台音箱都是一条独立输出，各自有 token/did/IP。
-  const handleBatchCreate = useCallback(async () => {
-    const targets = devices.filter(
-      (d) => selectedDids.includes(d.did) && isUsableDevice(d),
-    )
-    if (targets.length === 0) return
-
-    setBatchBusy(true)
-    setBatchResult(null)
-    const created = []
-    const failed = []
-    try {
-      // 服务端不接受重复 ID，先把已存在的收进来，再逐台去重
-      const taken = new Set()
-      try {
-        const res = await fetch('/api/jukebox/outputs')
-        if (res.ok) {
-          const list = await res.json()
-          list.forEach((o) => taken.add(o.id))
-        }
-      } catch {
-        // 读不到就靠后面的 400 兜底
-      }
-
-      for (const dev of targets) {
-        const id = uniqueOutputId(dev.name, 'xiaomi', taken)
-        taken.add(id)
-        const payload = {
-          id,
-          name: dev.name || id,
-          type: 'xiaomi',
-          address: dev.localip,
-        }
-        if (dev.token) payload.token = dev.token
-        if (dev.did) payload.did = dev.did
-        if (dev.model) {
-          payload.model = dev.model.replace(/^xiaomi\.wifispeaker\./, '')
-        }
-        if (authResult?.userId) payload.account = String(authResult.userId)
-        if (authResult?.passToken) payload.passToken = authResult.passToken
-        try {
-          const res = await fetch('/api/jukebox/outputs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          })
-          if (res.ok) {
-            created.push(dev)
-          } else {
-            failed.push({ dev, reason: (await res.text()).trim() })
-          }
-        } catch (e) {
-          failed.push({ dev, reason: e.message })
-        }
-      }
-    } finally {
-      setBatchBusy(false)
-    }
-
-    setCreatedDids((prev) => [...prev, ...created.map((d) => d.did)])
-    setSelectedDids((prev) =>
-      prev.filter((did) => !created.some((d) => d.did === did)),
-    )
-    setBatchResult({ created: created.length, failed })
-    if (onBatchCreated) onBatchCreated({ created, failed })
-  }, [devices, selectedDids, authResult, onBatchCreated])
+  }, [speakerDevices, prefillFromDevice])
 
   return (
     <Card className={classes.root} variant="outlined">
@@ -494,7 +476,8 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
             color="secondary"
             onClick={() => {
               setAuthResult(null)
-              setAppliedDevice(null)
+              prefilledDidRef.current = null
+              setSelectedDids([])
               setQrInfo(null)
             }}
           >
@@ -726,9 +709,8 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
                     小米账号授权成功 (ID: {authResult.userId})
                   </Typography>
                   <Typography variant="caption" color="textSecondary">
-                    共检索到 {devices.length}{' '}
-                    台智能设备。勾选多台可一次性添加为输出设备；
-                    单台则用「选用此音箱」填入下方表单。
+                    共检索到 {devices.length} 台智能设备。勾选即自动填入下方表单
+                    （可修改），勾选多台可一次性添加为输出设备。
                   </Typography>
                 </div>
               </div>
@@ -761,11 +743,7 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
               </Typography>
               {speakerDevices.length > 0 && (
                 <div className={classes.batchBar}>
-                  <Button
-                    size="small"
-                    onClick={toggleSelectAll}
-                    disabled={batchBusy}
-                  >
+                  <Button size="small" onClick={toggleSelectAll}>
                     {selectedDids.length === usableDids(speakerDevices).length
                       ? '取消全选'
                       : '全选'}
@@ -774,36 +752,12 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
                     已选 {selectedDids.length} 台
                   </Typography>
                   <div className={classes.grow} />
-                  <Button
-                    size="small"
-                    variant="contained"
-                    color="primary"
-                    onClick={handleBatchCreate}
-                    disabled={batchBusy || selectedDids.length === 0}
-                    startIcon={
-                      batchBusy ? (
-                        <CircularProgress size={14} color="inherit" />
-                      ) : (
-                        <PlaylistAddIcon fontSize="small" />
-                      )
-                    }
-                  >
-                    {batchBusy
-                      ? '正在添加...'
-                      : `添加所选 ${selectedDids.length} 台为输出设备`}
-                  </Button>
+                  {selectedDids.length > 0 ? (
+                    <Typography variant="caption" color="textSecondary">
+                      点「下一步」逐台确认名称、ID 与地址
+                    </Typography>
+                  ) : null}
                 </div>
-              )}
-              {batchResult && (
-                <Alert
-                  severity={batchResult.failed.length ? 'warning' : 'success'}
-                >
-                  已添加 {batchResult.created} 台输出设备
-                  {batchResult.failed.length > 0 &&
-                    `；${batchResult.failed.length} 台失败：${batchResult.failed
-                      .map((f) => `${f.dev.name}(${f.reason || '未知错误'})`)
-                      .join('、')}`}
-                </Alert>
               )}
               <List dense>
                 {speakerDevices.map((dev) => (
@@ -815,7 +769,7 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
                       edge="start"
                       size="small"
                       checked={selectedDids.includes(dev.did)}
-                      disabled={!isUsableDevice(dev) || batchBusy}
+                      disabled={!isUsableDevice(dev)}
                       onChange={() => toggleDevice(dev.did)}
                       inputProps={{ 'aria-label': `选择 ${dev.name}` }}
                     />
@@ -868,8 +822,18 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
                           />
                           <Chip
                             size="small"
-                            label={`局域网 IP: ${dev.localip || '未获取'}`}
-                            color={dev.localip ? 'primary' : 'default'}
+                            label={
+                              needsManualAddress(dev)
+                                ? '局域网 IP: 未知，需手填'
+                                : `局域网 IP: ${dev.localip || '未获取'}`
+                            }
+                            color={
+                              !dev.localip
+                                ? 'default'
+                                : needsManualAddress(dev)
+                                  ? 'secondary'
+                                  : 'primary'
+                            }
                             variant="outlined"
                             className={classes.chip}
                           />
@@ -888,34 +852,6 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
                         </div>
                       }
                     />
-                    <ListItemSecondaryAction>
-                      <Button
-                        variant={
-                          appliedDevice === dev.did || isCreated(dev.did)
-                            ? 'outlined'
-                            : 'contained'
-                        }
-                        color={
-                          appliedDevice === dev.did || isCreated(dev.did)
-                            ? 'default'
-                            : 'primary'
-                        }
-                        size="small"
-                        onClick={handlePickDevice(dev)}
-                        disabled={!isUsableDevice(dev)}
-                        startIcon={
-                          (appliedDevice === dev.did || isCreated(dev.did)) && (
-                            <CheckCircleIcon style={{ color: '#4caf50' }} />
-                          )
-                        }
-                      >
-                        {isCreated(dev.did)
-                          ? '已添加'
-                          : appliedDevice === dev.did
-                            ? '已填入'
-                            : '选用此音箱'}
-                      </Button>
-                    </ListItemSecondaryAction>
                   </ListItem>
                 ))}
               </List>
@@ -949,6 +885,14 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
                 <List dense style={{ maxHeight: 320, overflowY: 'auto' }}>
                   {otherDevices.map((dev) => (
                     <ListItem key={dev.did} className={classes.deviceItem}>
+                      <Checkbox
+                        edge="start"
+                        size="small"
+                        checked={selectedDids.includes(dev.did)}
+                        disabled={!isUsableDevice(dev)}
+                        onChange={() => toggleDevice(dev.did)}
+                        inputProps={{ 'aria-label': `选择 ${dev.name}` }}
+                      />
                       <ListItemText
                         secondaryTypographyProps={{ component: 'div' }}
                         primary={
@@ -982,15 +926,6 @@ const XiaomiAuthBlock = ({ formData, isCreate, onBatchCreated }) => {
                           </div>
                         }
                       />
-                      <ListItemSecondaryAction>
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          onClick={handlePickDevice(dev)}
-                        >
-                          {appliedDevice === dev.did ? '已填入' : '填入'}
-                        </Button>
-                      </ListItemSecondaryAction>
                     </ListItem>
                   ))}
                 </List>

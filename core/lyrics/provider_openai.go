@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -54,17 +53,17 @@ func (p *OpenAIProvider) Translate(ctx context.Context, lines []string, targetLa
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("openai-compatible api request: %w", err)
+		return nil, fmt.Errorf("openai-compatible api request: %w", sanitizeURLError(err))
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readLimited(resp, maxResponseBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading openai-compatible response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("openai-compatible api returned status %d: %s", resp.StatusCode, string(respBytes))
+		return nil, upstreamError("openai-compatible", resp.StatusCode, respBytes)
 	}
 
 	var res zhipuChatResponse

@@ -249,11 +249,12 @@
         "mpdSetup": "On most NASes MPD runs on the same machine on port 6600, so scanning is the quickest route. Manually, use host:port, e.g. 192.168.1.10:6600.",
         "idHint": "Left empty it is generated from the name. Only used by the config file and the API.",
         "advancedHint": "Usually not needed. Fill these in only when scanning fails or you must pin a token or a path mapping.",
-        "xiaomiAddress": "The speaker LAN address; the QR login fills it in.",
+        "xiaomiAddress": "The speaker's LAN IP. Fill it in by hand for offline devices.",
         "mpdAddress": "Scanning is quickest: most NASes run MPD on port 6600 of the local subnet. You can also type host:port.",
         "dlnaAddress": "Pick a result from the scan. Use the device description URL, not /AVTransport/control.",
         "dlnaNoExtra": "DLNA needs no extra settings, just save.",
-        "idAuto": "Will be generated as %{id} (you can change it)"
+        "idAuto": "Will be generated as %{id} (you can change it)",
+        "xiaomiPerDevice": "Name, ID and address are pre-filled and can be edited. The address must not be 0.0.0.x (that is the placeholder the Xiaomi cloud reports for offline devices)."
       },
       "sourceValues": {
         "config": "Configuration file",
@@ -278,7 +279,8 @@
         "deleted": "Output device deleted",
         "selected": "Now playing on {{name}}",
         "mpdOk": "Connected, the password is correct.",
-        "batchSaved": "Added %{count} output device(s)%{failed}"
+        "batchSaved": "Added %{count} output device(s)%{failed}",
+        "batchPartial": "{{count}} failed: {{detail}}"
       },
       "sections": {
         "current": "Current output",
@@ -290,7 +292,9 @@
         "xiaomi": "Xiaomi speaker",
         "mpd": "MPD",
         "pathMap": "Path mapping (optional)",
-        "dlna": "Connection"
+        "dlna": "Connection",
+        "xiaomiDevices": "Per-speaker configuration",
+        "xiaomiAccount": "Xiaomi account (shared by all speakers, optional)"
       },
       "localOutput": "This device",
       "localOutputHint": "Play on this device",
@@ -305,7 +309,9 @@
         "idRequired": "An ID is required",
         "idInvalid": "Only letters, digits, underscore and dash (1-64 chars)",
         "nameRequired": "A name is required",
-        "addressRequired": "An address is required"
+        "addressRequired": "An address is required",
+        "placeholderAddress": "0.0.0.x is a placeholder address, enter the speaker's real LAN IP",
+        "idDuplicate": "This ID is already used by another speaker"
       },
       "hint": {
         "mpdScanHint": "MPD has no broadcast mechanism, so the scan probes port 6600 across the local subnets.",
@@ -316,7 +322,9 @@
       "steps": {
         "type": "Type",
         "connection": "Connection",
-        "advanced": "Advanced"
+        "advanced": "Advanced",
+        "xiaomiPick": "Select the speakers to add",
+        "xiaomiPicked": "Selected {{count}}: {{names}}. Press Next to confirm the name, ID and address of each one."
       },
       "typeCards": {
         "xiaomi": {
@@ -867,7 +875,8 @@
       "batchStartFailed": "Could not start the job: %{reason}",
       "batchFinished": "Done! %{success} succeeded, %{failed} failed.",
       "batchCanceled": "Stop requested for the batch retranslation job",
-      "note.unknown": ""
+      "note.unknown": "",
+      "batchStoppingTitle": "Stopping batch translation, waiting for the current song..."
     },
     "onlyFavourites": "Only show favourites",
     "personal": {
@@ -939,7 +948,8 @@
     "translateFailed": "Translation failed — check network or API settings",
     "retranslating": "Retranslating...",
     "retranslateSuccess": "Retranslated",
-    "retranslateFailed": "Retranslation failed"
+    "retranslateFailed": "Retranslation failed",
+    "saveQueue": "Save the current play queue"
   },
   "about": {
     "links": {

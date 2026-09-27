@@ -36,7 +36,9 @@ vi.mock('../common', () => ({
   useToggleLove: vi.fn(),
 }))
 
-vi.mock('../actions', () => ({
+// partial mock：组件会经 playerReducer 间接用到 actions 里的常量
+vi.mock('../actions', async (importOriginal) => ({
+  ...(await importOriginal()),
   openSaveQueueDialog: vi.fn(),
 }))
 

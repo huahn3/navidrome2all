@@ -148,6 +148,15 @@ func (m *manager) StoredOutputs() []conf.JukeboxOutputDevice {
 func (m *manager) SetStoredOutputs(devs []conf.JukeboxOutputDevice) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// 先记下**替换前**当前选中设备的配置，稍后用来判断是否真的需要重建驱动
+	// （替换之后再查就变成自己比自己了）。
+	var prev conf.JukeboxOutputDevice
+	var hadPrev bool
+	if m.selected != "" && m.selected != BrowserOutputID {
+		prev, hadPrev = m.findDeviceLocked(m.selected)
+	}
+
 	m.stored = append([]conf.JukeboxOutputDevice(nil), devs...)
 
 	if m.selected == "" || m.selected == BrowserOutputID {
@@ -160,7 +169,12 @@ func (m *manager) SetStoredOutputs(devs []conf.JukeboxOutputDevice) {
 		m.selected = BrowserOutputID
 		return
 	}
-	// Rebuild the driver so a changed configuration takes effect immediately.
+	// 只有当前选中设备的**配置真的变了**才重建驱动。
+	// 无条件重建的话，用户在"输出设备"页新增/修改一个**无关**设备就会打断正在播放的
+	// 音乐（小米还要重做一次握手、DLNA 的 seek 校验协程也会被作废）。
+	if m.driver != nil && hadPrev && prev == dev {
+		return
+	}
 	if m.driver != nil {
 		if err := m.driver.Stop(); err != nil {
 			log.Warn("Could not stop jukebox device before reconfiguring", "device", m.selected, err)
@@ -218,6 +232,15 @@ func (m *manager) Select(deviceID string) error {
 		return nil
 	}
 
+	// 先把新驱动建好，再停旧设备。
+	// 反过来的话，一旦 factory 失败：旧设备已经被 Stop() 静音，但 m.selected
+	// 仍指向它、m.driver 仍指着它 —— 对外报告"当前输出 = 旧设备"却实际已停，
+	// 状态与现实不一致，而且没有回滚路径。
+	driver, err := m.factory(dev)
+	if err != nil {
+		return err
+	}
+
 	// Best effort stop of the previously selected remote device
 	if m.driver != nil && m.selected != deviceID {
 		if err := m.driver.Stop(); err != nil {
@@ -225,10 +248,6 @@ func (m *manager) Select(deviceID string) error {
 		}
 	}
 
-	driver, err := m.factory(dev)
-	if err != nil {
-		return err
-	}
 	m.driver = driver
 	m.selected = deviceID
 	log.Info("Jukebox output switched", "device", deviceID, "type", dev.Type)

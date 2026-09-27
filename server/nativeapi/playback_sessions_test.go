@@ -2,12 +2,16 @@ package nativeapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 
+	"github.com/navidrome/navidrome/conf"
+	"github.com/navidrome/navidrome/core/scrobbler"
 	"github.com/navidrome/navidrome/model"
 	"github.com/navidrome/navidrome/model/request"
+	"github.com/navidrome/navidrome/server/events"
 	"github.com/navidrome/navidrome/tests"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -18,10 +22,23 @@ var _ = Describe("Playback Sessions Endpoints", func() {
 	var user model.User
 	var api *Router
 
+	var origJukeboxEnabled bool
+
 	BeforeEach(func() {
-		user = model.User{ID: "u1", UserName: "testuser", IsAdmin: false}
+		user = model.User{ID: "u1", UserName: "testuser", IsAdmin: false,
+			Libraries: []model.Library{{ID: 1, Name: "L1"}}}
 		ds = &tests.MockDataStore{MockedMediaFile: tests.CreateMockMediaFileRepo()}
 		api = &Router{ds: ds}
+		// takeover 现在会过 jukeboxGuard（它会 pause 远程输出），测试里要打开
+		origJukeboxEnabled = conf.Server.Jukebox.Enabled
+		conf.Server.Jukebox.Enabled = true
+		// tracker 是单例且捕获了创建时的 DataStore，换了 mock store 必须重建
+		scrobbler.ResetInstance()
+	})
+
+	AfterEach(func() {
+		conf.Server.Jukebox.Enabled = origJukeboxEnabled
+		scrobbler.ResetInstance()
 	})
 
 	It("GET /api/playback/sessions returns 200 with sessions list", func() {
@@ -38,7 +55,31 @@ var _ = Describe("Playback Sessions Endpoints", func() {
 		Expect(resp.Sessions).NotTo(BeNil())
 	})
 
+	// 造一条真实的正在播放会话。ReportPlayback 会先查 mediafile，查不到就不注册；
+	// broker 也必须给（nil 会在 NowPlaying 广播处 panic）。
+	seedSession := func(playerID, userID string) {
+		// GetNowPlaying 会按库权限过滤，所以 mediafile 要落在用户可见的库里
+		ds.MockedMediaFile.(*tests.MockMediaFileRepo).Data["song-1"] = &model.MediaFile{
+			ID: "song-1", Title: "S1", Path: "/m/s1.mp3", LibraryID: 1,
+		}
+		tracker := scrobbler.GetPlayTracker(ds, events.NoopBroker(), nil)
+		ctx := request.WithUser(context.Background(), model.User{
+			ID: userID, UserName: userID,
+			Libraries: []model.Library{{ID: 1, Name: "L1"}},
+		})
+		Expect(tracker.ReportPlayback(ctx, scrobbler.ReportPlaybackParams{
+			MediaId:        "song-1",
+			PositionMs:     1000,
+			State:          scrobbler.StatePlaying,
+			ClientId:       playerID,
+			ClientName:     "Test Player",
+			IgnoreScrobble: true,
+			OutputDevice:   "browser",
+		})).To(Succeed())
+	}
+
 	It("POST /api/playback/sessions/{id}/takeover handles takeover gracefully with pause and broadcast fields", func() {
+		seedSession("test-client-1", "u1")
 		body, _ := json.Marshal(TakeoverRequest{
 			Action:          "pause",
 			SourceSessionID: "browser-tab-2",
@@ -76,6 +117,18 @@ var _ = Describe("Playback Sessions Endpoints", func() {
 		Expect(string(data)).To(ContainSubstring(`"bilingual":true`))
 	})
 
+	It("POST /api/playback/sessions/{id}/takeover returns 404 for an unknown session", func() {
+		// 之前会话不存在时会照样暂停全局 jukebox 并返回 200 + 一个不存在的 id
+		body, _ := json.Marshal(TakeoverRequest{Action: "pause"})
+		req := httptest.NewRequest(http.MethodPost, "/playback/sessions/nope/takeover", bytes.NewReader(body))
+		req = req.WithContext(request.WithUser(req.Context(), user))
+
+		rec := httptest.NewRecorder()
+		api.takeoverPlaybackSession(rec, req)
+
+		Expect(rec.Code).To(Equal(http.StatusNotFound))
+	})
+
 	It("POST /api/playback/sessions/{id}/takeover rejects invalid action", func() {
 		body, _ := json.Marshal(map[string]string{"action": "invalid"})
 		req := httptest.NewRequest(http.MethodPost, "/playback/sessions/test-client-1/takeover", bytes.NewReader(body))
@@ -85,5 +138,23 @@ var _ = Describe("Playback Sessions Endpoints", func() {
 		api.takeoverPlaybackSession(rec, req)
 
 		Expect(rec.Code).To(Equal(http.StatusBadRequest))
+	})
+	// 接管是写操作：会 pause/stop 对方的播放并改写其上报状态。
+	// 之前这里没有任何归属校验，任意登录用户都能打断别人的播放。
+	DescribeTable("canTakeOverSession enforces ownership",
+		func(caller model.User, targetOwner string, allowed bool) {
+			session := &scrobbler.PlaybackSession{UserId: targetOwner, PlayerId: "p1"}
+			Expect(canTakeOverSession(caller, session)).To(Equal(allowed))
+		},
+		Entry("owner may take over own session",
+			model.User{ID: "u1"}, "u1", true),
+		Entry("non-admin may not take over another user's session",
+			model.User{ID: "u2"}, "u1", false),
+		Entry("admin may take over any session",
+			model.User{ID: "admin", IsAdmin: true}, "u1", true),
+	)
+
+	It("canTakeOverSession rejects a nil session even for admins", func() {
+		Expect(canTakeOverSession(model.User{IsAdmin: true}, nil)).To(BeFalse())
 	})
 })

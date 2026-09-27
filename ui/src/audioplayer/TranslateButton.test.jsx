@@ -29,7 +29,9 @@ vi.mock('../dataProvider/httpClient', () => ({
   default: vi.fn(),
 }))
 
-vi.mock('../actions', () => ({
+// partial mock：组件会经 playerReducer 间接用到 actions 里的常量
+vi.mock('../actions', async (importOriginal) => ({
+  ...(await importOriginal()),
   updateSongLyric: vi.fn((trackId, lyric, isBilingual) => ({
     type: 'PLAYER_UPDATE_SONG_LYRIC',
     data: { trackId, lyric, isBilingual },
@@ -61,7 +63,7 @@ describe('<TranslateButton />', () => {
     useSelector.mockImplementation((selector) =>
       selector({
         player: {
-          bilingualActive: true,
+          bilingualTrackId: 'song1',
           current: { trackId: 'song1', lyric: 'Bilingual Lyric' },
           originalLyrics: { song1: 'Original Lyric' },
           bilingualLyrics: { song1: 'Bilingual Lyric' },
@@ -189,5 +191,97 @@ describe('<TranslateButton />', () => {
         true,
       )
     })
+  })
+
+  it("does not treat another track's bilingual flag as this one being bilingual", () => {
+    // 回归：双语态以前是全局 boolean。给 song1 开了双语后切到 song2，
+    // song2 的按钮也会显示"已双语"，点一下却提示"已恢复原文歌词"——
+    // 因为 song2 从来没被翻译过。
+    useSelector.mockImplementation((selector) =>
+      selector({
+        player: {
+          // song1 才是双语的
+          bilingualTrackId: 'song1',
+          current: { trackId: 'song2', lyric: 'Song2 Lyric' },
+          originalLyrics: { song2: 'Song2 Original' },
+          bilingualLyrics: { song1: 'Bilingual Lyric' },
+        },
+      }),
+    )
+
+    render(<TranslateButton id="song2" isRadio={false} isDesktop />)
+    fireEvent.click(screen.getByTestId('translate-lyrics-button'))
+
+    // song2 没有缓存译文，应该去请求翻译，而不是"恢复原文"
+    expect(httpClient).toHaveBeenCalledWith(
+      '/api/lyrics/translate',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(updateSongLyric).not.toHaveBeenCalledWith(
+      'song2',
+      expect.anything(),
+      false,
+    )
+  })
+
+  it('does not block a different track while one translation is in flight', async () => {
+    // 回归：在飞状态以前是全局 boolean。给 song1 翻译期间切到 song2，
+    // song2 的按钮点不动；song1 请求结束后还会顺手把 song2 的 loading 状态清掉。
+    useSelector.mockImplementation((selector) =>
+      selector({ player: { current: { trackId: 'song1', lyric: 'L' } } }),
+    )
+
+    let resolveSong1
+    let resolveSong2
+    httpClient
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSong1 = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSong2 = resolve
+          }),
+      )
+
+    const { rerender } = render(
+      <TranslateButton id="song1" isRadio={false} isDesktop />,
+    )
+    fireEvent.click(screen.getByTestId('translate-lyrics-button'))
+    expect(httpClient).toHaveBeenCalledTimes(1)
+
+    // 切到 song2：必须能发起自己的请求，不能被 song1 挡住
+    rerender(<TranslateButton id="song2" isRadio={false} isDesktop />)
+    fireEvent.click(screen.getByTestId('translate-lyrics-button'))
+    expect(httpClient).toHaveBeenCalledTimes(2)
+
+    // song1 先结束：song2 还在飞，不能被顺手清掉 loading
+    resolveSong1({ json: { inlineLrc: 'SONG1-BILINGUAL' } })
+    await waitFor(() =>
+      expect(updateSongLyric).toHaveBeenCalledWith(
+        'song1',
+        'SONG1-BILINGUAL',
+        true,
+      ),
+    )
+    // 关键断言：song2 必须仍在翻译中（转圈 + 提示语）
+    expect(screen.getByRole('progressbar')).toBeTruthy()
+    expect(
+      screen.getByTestId('translate-lyrics-button').getAttribute('aria-label'),
+    ).not.toBe('翻译歌词 (双语对照，右键单击强制重译)')
+
+    // song2 自己的结果随后正常落地
+    resolveSong2({ json: { inlineLrc: 'SONG2-BILINGUAL' } })
+    await waitFor(() =>
+      expect(updateSongLyric).toHaveBeenCalledWith(
+        'song2',
+        'SONG2-BILINGUAL',
+        true,
+      ),
+    )
+    expect(screen.queryByRole('progressbar')).toBeNull()
   })
 })

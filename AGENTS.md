@@ -39,8 +39,8 @@ Go **必须带 build tags**，否则编译失败（sqlite 需要 `sqlite_fts5`�
 
 ```bash
 # 单包测试（Ginkgo v2 + Gomega）
-make test PKG=./core/jukebox        # 112 specs
-make test PKG=./server/nativeapi    # 191 specs
+make test PKG=./core/jukebox        # 125 specs
+make test PKG=./server/nativeapi    # 197 specs
 make test PKG=./core/lyrics         # 42 specs（歌词引擎与翻译缓存）
 make test PKG=./core/scrobbler      # 104 specs
 # 等价裸命令
@@ -55,7 +55,7 @@ gofmt -l core server conf scripts   # 必须无输出
 
 ```bash
 cd ui
-npm run test          # Vitest：92 文件 / 804 用例
+npm run test          # Vitest：94 文件 / 843 用例
 # 单跑：npx vitest run src/audioplayer/TranslateButton.test.jsx
 #       npx vitest run src/lyricsTranslation     # 歌词翻译管理页
 #       npx vitest run src/jukebox               # 输出设备控制台与向导
@@ -174,7 +174,11 @@ Web 端的歌词显示在架构上分为**两层**：
 
 **队列同步保护（防回滚，见 `ui/src/audioplayer/Player.jsx`）**：
 播放器内核在 `reduceSyncQueue` 和 `reduceCurrent` 中，会在用户调整播放队列或切歌时用传入的 queue item 覆盖 `audioLists`。
-如果当前曲目处于双语激活状态（`bilingualActive == true`），**必须保留已注入的双语 `lyric`**，严禁被队列项里的原始未翻译歌词回滚覆盖。
+如果当前曲目处于双语激活状态（`isBilingualTrack(state, trackId)`，即
+`bilingualTrackId === trackId`），**必须保留已注入的双语 `lyric`**，严禁被队列项里的
+原始未翻译歌词回滚覆盖。**双语态按曲目隔离**：`bilingualTrackId` 是唯一真源，
+不要再引入全局 boolean（那会让"给 A 翻译后切到 B，B 的按钮也显示已双语"）。
+上报给后端的 wire 字段仍是 boolean `bilingualActive`，由 `isBilingualTrack` 推导。
 
 ### 三种歌词格式与分工
 
@@ -270,8 +274,46 @@ Web 端的歌词显示在架构上分为**两层**：
   纯中文名 `slugify` 拿不到 ASCII，会退化成 `<type>-<短哈希>`（`xiaomi-54hp`）——这是预期
   行为，不是 bug。生成是**保存时**才发生的，输入框只做预览，见 `docs/risk-notes-optimization.md` §10.3。
 
+**小米批量添加**
+- **`/api/jukebox/*` 绝不能用裸 `fetch`**。裸 `fetch` 不带 `X-ND-Authorization`
+  头，后端一律 401 `{"error":"Not authenticated"}`，界面上表现为
+  "已添加 0 台输出设备，N 台失败"——看起来像批量功能坏了，其实是鉴权。
+  统一用 `ui/src/audioplayer/jukebox.js` 里的封装（内部走 `httpClient`），
+  新增端点时在那里加函数，不要在组件里直接 fetch。
+- **离线设备的小米云会回 `0.0.0.1`** 这种占位地址。`isUsableDevice` 必须排除
+  `0.0.0.x`，否则离线音箱会进"推荐"、能被勾选，保存下来是一条永远连不上的
+  坏配置。
+- **小爱音箱的批量流程**：第 2 步只做"登录 + 勾选"（**不要**在第 2 步放单台
+  表单）；第 3 步按 `values.xiaomiDevices` 逐台渲染卡片并逐台 POST。
+  `validate` 必须按 `isBatch` 分叉——顶层 `name`/`address` 在批量模式下不存在，
+  不分叉的话 `Form` 的 onSubmit 永远不会触发（表现为"保存能点但没反应"）。
+- **离线音箱（小米云回 `0.0.0.1`）要允许勾选**，只是不预填地址、标"需手填"。
+  禁掉勾选框等于让用户没法批量添加——他本来就知道真实 IP。
+- **`OutputEditorDialog.test.jsx` 把 `XiaomiAuthBlock` 整个 mock 掉了**，
+  改两者之间的 props 契约（尤其是 `formData`）时必须另外跑
+  `OutputEditorDialog.mount.test.jsx`——那个文件刻意不 mock，专守挂载路径。
+  漏传 `formData` 会让 `formData.account` 抛 TypeError，整页变成"发生错误"。
+- `OutputEditorDialog` 的 `Input` 靠 `name` 派生 `id`（`nd-out-<name>`）。
+  没有它 react-final-form 只给 name 不给 id，MUI 的 `<label for>` 对不上 `<input>`，
+  读屏软件读不到字段。
+
 **前端与验证**
-- `DeviceSelector` 渲染时即使没打开菜单也会挂载多个隐藏的 `[role=menu]` popover，
+- **驱动必须自己设超时**。gompd 的 `mpd.Dial` 走裸 `net.Dial` 且不暴露底层连接，
+  设不了 deadline；而 manager 所有命令持同一把全局锁，一个黑洞地址就能挂死整个
+  `/api/jukebox/*`。新写驱动时把"连不上/不回数据"都算进失败路径。
+- **SSDP 的 `LOCATION` 头是攻击者可控输入**。`discover_dlna.go` 的 `rendererHTTPClient`
+  在**拨号时**校验每个解析出的地址（防 DNS rebinding），且 `isLANAddress` 明确排除
+  169.254.0.0/16。新增"抓取外部给出的 URL"的代码时照抄这个模式。
+- **上游错误不要原样回显**。`server/nativeapi/jukebox.go` 的 `jukeboxDriverError`
+  是把驱动错误原文返回给客户端的，所以驱动里拼进错误的任何凭据都会进 HTTP 响应
+  和日志（见 `xiaomiCloudClient.scrub`、`lyrics.sanitizeURLError`）。
+  另外 `net/http` 只遮蔽 URL 的 userinfo，**query 里的 key 一律原样保留**——
+  密钥只能走请求头。
+- **`scrobbler.GetPlayTracker` 是单例且捕获创建时的 DataStore**。测试换 mock store
+  后要在 `BeforeEach` 调 `scrobbler.ResetInstance()`，否则报 `data not found`。
+- **比较"配置有没有变"必须用替换前的快照**。`SetStoredOutputs` 里如果替换完
+  `stored` 再查当前配置来比较，等于自己比自己，驱动重建会被静默跳过。
+- `DeviceSelector` 渲染时即使没打开菜单也会挂载多个隐藏的 `[role=menu]` popover,
   DOM 里"存在"不等于"可见"——脚本断言只看有尺寸的那个。
 - `page.evaluate()` 里的 `element.click()` **不是用户手势**，移动端媒体元素拿不到播放权限；
   验证播放要用真实点击。
@@ -294,6 +336,8 @@ core/jukebox/            本 fork 的播放后端（唯一真源）
   discover_mpd.go        MPD 私网 /24 扫描 + 密码探测 + 连通性验证
   outputs_store.go       输出配置的 DB 读写
 core/lyrics/             本 fork 的歌词翻译中枢
+  provider_errors.go     错误脱敏（丢 URL）+ 响应体限量/截断
+  batch_internal_test.go 批量重译代次竞态回归（package lyrics，看得到未导出字段）
   translation.go         TranslationService 单例 / 磁盘缓存 / singleflight / inlineLrc 合成
   provider_gemini.go     Gemini 引擎 (REST API)
   provider_zhipu.go      智谱 GLM-4-Flash 引擎
@@ -305,6 +349,7 @@ server/nativeapi/
   jukebox.go             /api/jukebox/{devices,status,select,play,control} + 流 URL 生成 + 错误映射
   jukebox_outputs.go     /api/jukebox/outputs CRUD、/discover(DLNA+MPD)、/verify/mpd（admin-only）
   lyrics_translation.go  /api/lyrics/translate 与 /config /test 管理接口
+  config.go              /api/config 响应脱敏（注意 Jukebox.Outputs 是 slice，要递归进去）
 server/subsonic/
   jukebox.go             上游 Subsonic jukeboxControl（另一套，勿动语义）
   stream.go + StreamAlias /rest/stream/{id}.mp3 别名端点（小爱要求带扩展名）
@@ -328,7 +373,7 @@ ui/src/audioplayer/volume.js  音量换算与限幅纯函数（测试覆盖，�
 ui/src/themes/useCurrentTheme.js  主题应用：注入 player.stylesheet + 写 --nd-dock-* 变量
 ui/src/themes/*.js               28 个主题；**每个都必须声明 palette.type**（缺了播放 dock 会误判深浅）
 ui/src/index.css                  .responsive-fields：手机端窄屏防溢出（见第 9 节）
-ui/src/reducers/playerReducer.js   outputDevice 与 bilingualActive/Lyrics 状态与迁移
+ui/src/reducers/playerReducer.js   outputDevice 与 bilingualTrackId/Lyrics 状态与迁移、isBilingualTrack 判定
 ui/src/store/createAdminStore.js   持久化白名单 + 音量 0 兜底
 resources/i18n/*.json    后端 i18n（zh-Hans/zh-Hant 含 jukebox 与翻译文案）
 ui/src/i18n/*.json       前端 i18n

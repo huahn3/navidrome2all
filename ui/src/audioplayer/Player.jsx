@@ -40,6 +40,7 @@ import {
   perceivedToElementVolume,
 } from './volume'
 import subsonic from '../subsonic'
+import { isBilingualTrack } from '../reducers/playerReducer'
 import locale from './locale'
 import { keyMap } from '../hotkeys'
 import keyHandlers from './keyHandlers'
@@ -103,7 +104,11 @@ const Player = () => {
       ),
       outputDevice: outputDeviceRef.current || BROWSER_DEVICE,
       playMode: playerStateRef.current?.mode || '',
-      bilingualActive: !!playerStateRef.current?.bilingualActive,
+      // wire 上仍是 boolean，但语义改为"当前曲目是否双语"，与后端会话字段一致
+      bilingualActive: isBilingualTrack(
+        playerStateRef.current || {},
+        playerStateRef.current?.current?.trackId,
+      ),
     }),
     [],
   )
@@ -531,8 +536,11 @@ const Player = () => {
   }, [playerState.current?.lyric, playerState.current?.trackId, audioInstance])
 
   // If bilingual mode was inherited during handoff, ensure the translated lyric is loaded
-  const isBilingualActive = playerState.bilingualActive
   const currentTrackIdForLyric = playerState.current?.trackId
+  const isBilingualActive = isBilingualTrack(
+    playerState,
+    currentTrackIdForLyric,
+  )
   const bilingualLyrics = playerState.bilingualLyrics
   useEffect(() => {
     if (
@@ -630,11 +638,22 @@ const Player = () => {
     [gainInfo, playerTheme, translate, playerState.mode],
   )
 
+  // audioLists 只在队列真的换了引用时才重建。
+  // 以前每次渲染都 playerState.queue.map() 出一个新数组，配合下面 options 的
+  // 宽松依赖，会让播放器内核在无关状态变化时也看到"新队列"并整体重算。
+  const audioLists = useMemo(
+    () => playerState.queue.map((item) => item),
+    [playerState.queue],
+  )
+
+  // 依赖必须逐字段列出。早先写的是 [playerState, defaultOptions]，
+  // 任何 store 变化（音量拖动、进度、歌词状态）都会产出全新的 options 对象，
+  // 而 options 是 ReactJkMusicPlayer 的 props，等于每次都触发内核重渲染。
   const options = useMemo(() => {
     const current = playerState.current || {}
     return {
       ...defaultOptions,
-      audioLists: playerState.queue.map((item) => item),
+      audioLists,
       playIndex: playerState.playIndex,
       autoPlay:
         playerState.queue.length > 0 &&
@@ -648,7 +667,19 @@ const Player = () => {
       defaultVolume: playerState.volume,
       showMediaSession: !current.isRadio,
     }
-  }, [playerState, defaultOptions])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    defaultOptions,
+    audioLists,
+    playerState.playIndex,
+    playerState.autoPlay,
+    playerState.pendingState,
+    playerState.clear,
+    playerState.volume,
+    playerState.queue.length,
+    playerState.current?.trackId,
+    playerState.current?.isRadio,
+  ])
 
   const onAudioListsChange = useCallback(
     (_, audioLists, audioInfo) => dispatch(syncQueue(audioInfo, audioLists)),

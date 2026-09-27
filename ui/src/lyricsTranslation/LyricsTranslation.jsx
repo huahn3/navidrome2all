@@ -1214,6 +1214,12 @@ const LyricsTranslation = () => {
                   size="small"
                   onClick={fetchCacheList}
                   disabled={loadingCache}
+                  aria-label={translate(
+                    'menu.lyricsTranslation.tip.refreshCache',
+                    {
+                      _: '刷新缓存列表',
+                    },
+                  )}
                 >
                   {loadingCache ? (
                     <CircularProgress size={16} />
@@ -1244,9 +1250,13 @@ const LyricsTranslation = () => {
                   }}
                 >
                   <CircularProgress size={16} />
-                  {translate('menu.lyricsTranslation.batchRunningTitle', {
-                    _: '正在批量重新翻译所有已缓存歌曲...',
-                  })}
+                  {batchStatus.canceling
+                    ? translate('menu.lyricsTranslation.batchStoppingTitle', {
+                        _: '正在停止批量翻译，等待当前歌曲处理完毕...',
+                      })
+                    : translate('menu.lyricsTranslation.batchRunningTitle', {
+                        _: '正在批量重新翻译所有已缓存歌曲...',
+                      })}
                 </Typography>
                 <Button
                   size="small"
@@ -1254,6 +1264,7 @@ const LyricsTranslation = () => {
                   variant="outlined"
                   startIcon={<MdStop />}
                   onClick={handleCancelBatch}
+                  disabled={batchStatus.canceling}
                 >
                   {translate('menu.lyricsTranslation.action.stopTask', {
                     _: '终止任务',

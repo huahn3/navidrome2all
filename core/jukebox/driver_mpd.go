@@ -2,9 +2,11 @@ package jukebox
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fhs/gompd/mpd"
 	"github.com/navidrome/navidrome/conf"
@@ -35,11 +37,64 @@ func newMPDDriver(dev conf.JukeboxOutputDevice) *mpdDriver {
 	}
 }
 
+const (
+	// mpdConnectTimeout 限制建立 TCP 连接的时长。
+	// gompd 的 mpd.Dial 走的是 textproto.Dial（裸 net.Dial，无 Timeout），
+	// 而且不暴露底层连接、设不了 deadline。
+	mpdConnectTimeout = 5 * time.Second
+	// mpdHandshakeTimeout 兜住"连上了但不回 greeting"（读命令永久阻塞）的情况。
+	mpdHandshakeTimeout = 8 * time.Second
+)
+
+type mpdConnectResult struct {
+	client *mpd.Client
+	err    error
+}
+
 func (d *mpdDriver) connect() (*mpd.Client, error) {
-	if d.password != "" {
-		return mpd.DialAuthenticated("tcp", d.address, d.password)
+	// 第一层：自己先探一次可达性。黑洞地址（SYN 无响应）在这里就会以
+	// "i/o timeout" 快速失败，而不是把调用方挂死。
+	if err := d.probeReachable(); err != nil {
+		return nil, err
 	}
-	return mpd.Dial("tcp", d.address)
+
+	// 第二层：整个拨号+握手放进 goroutine，用定时器兜底。
+	// 若 MPD 接受了 TCP 却从不回 greeting，gompd 会永远阻塞在 ReadLine 上。
+	ch := make(chan mpdConnectResult, 1)
+	go func() {
+		var c *mpd.Client
+		var err error
+		if d.password != "" {
+			c, err = mpd.DialAuthenticated("tcp", d.address, d.password)
+		} else {
+			c, err = mpd.Dial("tcp", d.address)
+		}
+		ch <- mpdConnectResult{client: c, err: err}
+	}()
+
+	timer := time.NewTimer(mpdHandshakeTimeout)
+	defer timer.Stop()
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			return nil, fmt.Errorf("mpd: connect %s: %w", d.address, res.err)
+		}
+		return res.client, nil
+	case <-timer.C:
+		// 这个 goroutine 会一直阻塞在读 greeting 上，但它不持有任何锁，
+		// 调用方已经返回、DeviceManager 的全局锁随之释放。
+		return nil, fmt.Errorf("mpd: connect %s timed out after %s", d.address, mpdHandshakeTimeout)
+	}
+}
+
+// probeReachable 快速确认 MPD 地址可达，避免把不可达地址直接交给无超时的 gompd。
+func (d *mpdDriver) probeReachable() error {
+	conn, err := net.DialTimeout("tcp", d.address, mpdConnectTimeout)
+	if err != nil {
+		return fmt.Errorf("mpd: cannot reach %s: %w", d.address, err)
+	}
+	_ = conn.Close()
+	return nil
 }
 
 // rewritePath maps the media path as seen by Navidrome to the path visible to MPD.

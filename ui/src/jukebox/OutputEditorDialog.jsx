@@ -187,6 +187,20 @@ const useStyles = makeStyles((theme) => ({
   },
   field: { marginTop: theme.spacing(1) },
   fieldTight: { marginTop: theme.spacing(0.5) },
+  // 小米批量：每台音箱一张卡片。min-width:0 是必须的，否则卡片的 min-content
+  // 会把窄屏整页撑宽（见 AGENTS 第 9 节）
+  deviceCard: {
+    border: `1px solid ${theme.palette.divider}`,
+    borderRadius: theme.shape.borderRadius,
+    padding: theme.spacing(1.5),
+    marginTop: theme.spacing(1.5),
+    minWidth: 0,
+  },
+  deviceCardTitle: {
+    fontWeight: 600,
+    marginBottom: theme.spacing(1),
+    wordBreak: 'break-word',
+  },
   scanHead: {
     display: 'flex',
     gap: theme.spacing(1),
@@ -243,10 +257,14 @@ const Input = ({
   ...rest
 }) => {
   const translate = useTranslate()
+  // react-final-form 只给 name，不给 id；没有 id 时 MUI 生成的 <label for> 与
+  // <input> 对不上，读屏软件读不到这个字段（getByLabelText 也找不到）。
+  const fieldId = rest.id || (input.name ? `nd-out-${input.name}` : undefined)
   return (
     <TextField
       {...input}
       {...rest}
+      id={fieldId}
       type={type}
       label={translate(label, { _: label })}
       helperText={helperText}
@@ -555,13 +573,108 @@ const OutputEditorDialog = ({ mode, output, onClose, onSaved }) => {
   // false until the user actually types in the ID field; editing an existing
   // device starts as "touched" so its stored ID is never rewritten.
   const idTouched = useRef(!isCreate)
+  // 小米批量添加：当前勾选的音箱，以及在第 3 步逐台填写的配置
+  const [selectedDevices, setSelectedDevices] = useState([])
+  // final-form 的实例只在 render 回调里拿到，这里存一份引用给事件回调用
+  const formRef = useRef(null)
 
   const initialValues = { ...EMPTY_OUTPUT, ...(output || {}) }
 
+  // 勾选变化时把每台设备初始化进 xiaomiDevices。只在勾选集变化时触发，
+  // 所以第 3 步里用户改过的字段不会被回滚覆盖。
+  const handleXiaomiSelection = useCallback((devices) => {
+    setSelectedDevices(devices)
+    const form = formRef.current
+    if (!form) return
+    const account = form.getState().values?.account
+    const passToken = form.getState().values?.passToken
+    form.change(
+      'xiaomiDevices',
+      devices.map((dev) => ({
+        key: dev.did,
+        name: dev.name || '',
+        // 离线设备的小米云只给 0.0.0.1 这种占位地址，预填进去等于骗用户
+        address: /^0\.0\.0\.\d*$/.test(dev.localip || '')
+          ? ''
+          : dev.localip || '',
+        token: dev.token || '',
+        did: dev.did || '',
+        model: (dev.model || '').replace(/^xiaomi\.wifispeaker\./, ''),
+      })),
+    )
+    // 账号级凭据跟着最新一台带过去，省得每勾一台都重填
+    if (account) form.change('account', account)
+    if (passToken) form.change('passToken', passToken)
+  }, [])
+
   const save = useCallback(
     async (values) => {
+      const type = (values.type || 'xiaomi').toLowerCase()
+      const devices = values.xiaomiDevices || []
+
+      // 批量小爱音箱：逐台创建。账号级凭据（account/password/passToken）是
+      // 整套输出设备共用的，每台都要带上——输出设备之间不共享账号配置。
+      if (isCreate && type === 'xiaomi' && devices.length > 0) {
+        const shared = {
+          account: values.account,
+          password: values.password,
+          passToken: values.passToken,
+        }
+        const created = []
+        const failed = []
+        for (const dev of devices) {
+          const payload = {
+            id: (dev.id || '').trim() || suggestId(dev.name, type),
+            name: (dev.name || '').trim(),
+            type,
+            address: (dev.address || '').trim(),
+            token: dev.token || '',
+            did: dev.did || '',
+            model: dev.model || '',
+          }
+          for (const [k, v] of Object.entries(shared)) {
+            if (v) payload[k] = v
+          }
+          try {
+            await httpClient('/api/jukebox/outputs', {
+              method: 'POST',
+              headers: new Headers({ 'Content-Type': 'application/json' }),
+              body: JSON.stringify(payload),
+            })
+            created.push(payload)
+          } catch (e) {
+            failed.push({ name: payload.name || payload.id, reason: e.message })
+          }
+        }
+        if (created.length > 0) {
+          notify('resources.jukeboxOutput.messages.saved', {
+            type: failed.length > 0 ? 'warning' : 'info',
+            messageOptions: { defaultMessage: '已保存 {{count}} 台输出设备' },
+            messageArgs: { count: created.length },
+          })
+          if (failed.length > 0) {
+            notify('resources.jukeboxOutput.messages.batchPartial', {
+              type: 'warning',
+              messageOptions: {
+                defaultMessage: '{{count}} 台失败：{{detail}}',
+              },
+              messageArgs: {
+                count: failed.length,
+                detail: failed.map((f) => `${f.name}(${f.reason})`).join('、'),
+              },
+            })
+          }
+        }
+        if (created.length > 0) {
+          onSaved()
+        }
+        return
+      }
+
       const payload = { ...values }
-      payload.type = (payload.type || 'xiaomi').toLowerCase()
+      // 批量模式的中间状态，不是输出设备的字段
+      delete payload.xiaomiDevices
+      payload.type = type
       // The ID is an implementation detail for the config file and the API, so
       // derive it from the name instead of making the user invent one.
       if (!payload.id?.trim()) {
@@ -599,10 +712,66 @@ const OutputEditorDialog = ({ mode, output, onClose, onSaved }) => {
     [isCreate, notify, onSaved],
   )
 
+  // 逐台校验：每台都要有名称和**可用**地址，ID 要合法且互不重复。
+  const validateXiaomiBatch = useCallback(
+    (devices) => {
+      const seenIds = new Set()
+      const perDevice = (devices || []).map((dev) => {
+        const devErrors = {}
+        const name = dev.name?.trim()
+        if (!name) {
+          devErrors.name = translate(
+            'resources.jukeboxOutput.errors.nameRequired',
+            { _: '需要填写名称' },
+          )
+        }
+        const address = (dev.address || '').trim()
+        if (!address) {
+          devErrors.address = translate(
+            'resources.jukeboxOutput.errors.addressRequired',
+            { _: '需要填写地址（离线设备需手动填局域网 IP）' },
+          )
+        } else if (/^0\.0\.0\.\d*$/.test(address)) {
+          // 小米云给离线设备回的就是这个占位地址，照存会得到一条永远连不上的配置
+          devErrors.address = translate(
+            'resources.jukeboxOutput.errors.placeholderAddress',
+            { _: '0.0.0.x 是占位地址，请填写音箱真实的局域网 IP' },
+          )
+        }
+        const id = (dev.id || '').trim() || suggestId(name, 'xiaomi')
+        if (id) {
+          if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) {
+            devErrors.id = translate(
+              'resources.jukeboxOutput.errors.idInvalid',
+              { _: 'ID 只能包含字母、数字、下划线和短横线（1-64 位）' },
+            )
+          } else if (seenIds.has(id)) {
+            devErrors.id = translate(
+              'resources.jukeboxOutput.errors.idDuplicate',
+              { _: 'ID 与其它音箱重复了' },
+            )
+          } else {
+            seenIds.add(id)
+          }
+        }
+        return Object.keys(devErrors).length > 0 ? devErrors : null
+      })
+      return perDevice.some(Boolean) ? { xiaomiDevices: perDevice } : {}
+    },
+    [translate],
+  )
+
   const validate = useCallback(
     (values) => {
       const errors = {}
       const type = (values.type || 'xiaomi').toLowerCase()
+      // 批量小爱音箱：名称/ID/地址在 xiaomiDevices 里逐台校验，
+      // 顶层的单台字段为空是正常的，不能拿它当"没填"。
+      const isBatch =
+        isCreate && type === 'xiaomi' && (values.xiaomiDevices || []).length > 0
+      if (isBatch) {
+        return validateXiaomiBatch(values.xiaomiDevices)
+      }
       const effectiveId = values.id?.trim() || suggestId(values.name, type)
       if (!effectiveId) {
         errors.id = translate('resources.jukeboxOutput.errors.idRequired', {
@@ -626,9 +795,10 @@ const OutputEditorDialog = ({ mode, output, onClose, onSaved }) => {
           },
         )
       }
+
       return errors
     },
-    [translate],
+    [isCreate, translate, validateXiaomiBatch],
   )
 
   const STEPS = [
@@ -665,12 +835,22 @@ const OutputEditorDialog = ({ mode, output, onClose, onSaved }) => {
         onSubmit={save}
         validate={validate}
         render={({ handleSubmit, form, submitting, values, errors }) => {
+          formRef.current = form
           const type = values.type || 'xiaomi'
+          const xiaomiDeviceErrors = errors.xiaomiDevices || []
           const meta = TYPES.find((t) => t.id === type) || TYPES[0]
           const Icon = meta.icon
           // Step 2 is the only one with required fields; the last step is optional.
-          const connectionIncomplete =
-            !values.name?.trim() || !values.address?.trim()
+          // 小爱音箱的连接信息在第 3 步逐台填，所以第 2 步只要求"至少勾选一台"。
+          const xiaomiPickedNothing =
+            type === 'xiaomi' &&
+            isCreate &&
+            (values.xiaomiDevices || []).length === 0
+          const connectionIncomplete = xiaomiPickedNothing
+            ? true
+            : type === 'xiaomi'
+              ? false
+              : !values.name?.trim() || !values.address?.trim()
           // Preview of the ID that will be stored when the field is left empty.
           const autoId =
             isCreate && !idTouched.current && !values.id?.trim()
@@ -678,6 +858,10 @@ const OutputEditorDialog = ({ mode, output, onClose, onSaved }) => {
               : ''
           // The ID requirement is satisfied by a typed ID or by the generated one.
           const idSatisfied = Boolean(values.id?.trim() || autoId)
+          // 批量模式（勾了多台小爱音箱）：保存按钮的门槛交给逐台校验
+          const isBatch =
+            type === 'xiaomi' && (values.xiaomiDevices || []).length > 0
+          const batchIncomplete = (errors.xiaomiDevices || []).some(Boolean)
 
           return (
             <form onSubmit={handleSubmit} style={{ display: 'contents' }}>
@@ -770,79 +954,37 @@ const OutputEditorDialog = ({ mode, output, onClose, onSaved }) => {
 
                     {type === 'xiaomi' && (
                       <Box>
-                        <div className={classes.row}>
-                          <Field
-                            name="name"
-                            component={Input}
-                            label="resources.jukeboxOutput.fields.name"
-                            autoFocus={isCreate}
-                          />
-                          <IdField
-                            disabled={!isCreate}
-                            helperText={
-                              errors.id ||
-                              (autoId
-                                ? translate(
-                                    'resources.jukeboxOutput.helpers.idAuto',
-                                    {
-                                      _: '将自动生成为：{{id}}（可自行修改）',
-                                      id: autoId,
-                                    },
-                                  )
-                                : translate(
-                                    'resources.jukeboxOutput.helpers.idHint',
-                                    {
-                                      _: '仅用于配置文件与接口调用，留空会按名称自动生成。',
-                                    },
-                                  ))
-                            }
-                            onTouched={() => {
-                              idTouched.current = true
-                            }}
-                          />
+                        <div className={classes.fieldTight}>
+                          <Typography variant="subtitle2" fontWeight={600}>
+                            {translate(
+                              'resources.jukeboxOutput.steps.xiaomiPick',
+                              { _: '选择要添加的音箱' },
+                            )}
+                          </Typography>
                         </div>
                         <div className={classes.fieldTight}>
                           <XiaomiAuthBlock
                             formData={values}
                             isCreate={isCreate}
-                            onBatchCreated={({ created, failed }) => {
-                              // 已经建成输出设备了，刷新列表；全都成功就直接关掉弹窗，
-                              // 有失败则留在页面上让用户看到 Alert
-                              onSaved({ keepOpen: failed.length > 0 })
-                              notify(
-                                'resources.jukeboxOutput.messages.batchSaved',
+                            onSelectionChange={handleXiaomiSelection}
+                          />
+                        </div>
+                        {selectedDevices.length > 0 && (
+                          <div className={classes.fieldTight}>
+                            <Typography variant="caption" color="textSecondary">
+                              {translate(
+                                'resources.jukeboxOutput.steps.xiaomiPicked',
                                 {
-                                  type: failed.length > 0 ? 'warning' : 'info',
-                                  messageOptions: {
-                                    defaultMessage:
-                                      '已添加 {{count}} 台输出设备{{failed}}',
-                                  },
-                                  messageArgs: {
-                                    count: created.length,
-                                    failed: failed.length
-                                      ? `，${failed.length} 台失败`
-                                      : '',
-                                  },
+                                  _: '已选 {{count}} 台：{{names}}。点「下一步」逐台确认名称、ID 与地址。',
+                                  count: selectedDevices.length,
+                                  names: selectedDevices
+                                    .map((d) => d.name)
+                                    .join('、'),
                                 },
-                              )
-                            }}
-                          />
-                        </div>
-                        <div className={classes.fieldTight}>
-                          <Field
-                            name="address"
-                            component={Input}
-                            label="resources.jukeboxOutput.fields.address"
-                            placeholder="192.168.1.10"
-                            helperText={translate(
-                              'resources.jukeboxOutput.helpers.xiaomiAddress',
-                              {
-                                _: '音箱的局域网 IP，扫码后会自动填好。',
-                              },
-                            )}
-                            error={Boolean(errors.address)}
-                          />
-                        </div>
+                              )}
+                            </Typography>
+                          </div>
+                        )}
                       </Box>
                     )}
 
@@ -996,37 +1138,102 @@ const OutputEditorDialog = ({ mode, output, onClose, onSaved }) => {
                     </div>
                     {type === 'xiaomi' ? (
                       <>
-                        <div className={classes.row}>
-                          <Field
-                            name="token"
-                            component={Input}
-                            label="resources.jukeboxOutput.fields.token"
-                            helperText={translate(
-                              'resources.jukeboxOutput.helpers.token',
-                              {
-                                _: '32 位十六进制 miIO 令牌，用于局域网控制',
-                              },
-                            )}
-                          />
-                          <Field
-                            name="did"
-                            component={Input}
-                            label="resources.jukeboxOutput.fields.did"
-                          />
+                        <div className={classes.sectionTitle}>
+                          {translate(
+                            'resources.jukeboxOutput.sections.xiaomiDevices',
+                            { _: '每台音箱的配置' },
+                          )}
                         </div>
-                        <div className={classes.row}>
-                          <Field
-                            name="model"
-                            component={Input}
-                            label="resources.jukeboxOutput.fields.model"
-                            placeholder="l7a / s12 / l05b"
-                          />
-                          <Field
-                            name="textDirective"
-                            component={Input}
-                            label="resources.jukeboxOutput.fields.textDirective"
-                            placeholder="siid-aiid"
-                          />
+                        <Typography variant="caption" color="textSecondary">
+                          {translate(
+                            'resources.jukeboxOutput.helpers.xiaomiPerDevice',
+                            {
+                              _: '名称、ID 与地址都已预填，可自行修改。地址不能是 0.0.0.x（那是小米云给离线设备回的占位地址）。',
+                            },
+                          )}
+                        </Typography>
+                        {(values.xiaomiDevices || []).map((dev, index) => (
+                          <Box
+                            key={dev.key || dev.did || index}
+                            className={classes.deviceCard}
+                          >
+                            <div className={classes.deviceCardTitle}>
+                              {index + 1}.{' '}
+                              {dev.name || selectedDevices[index]?.name}
+                              {dev.did ? ` (DID ${dev.did})` : ''}
+                            </div>
+                            <div className={classes.row}>
+                              <Field
+                                name={`xiaomiDevices[${index}].name`}
+                                component={Input}
+                                label="resources.jukeboxOutput.fields.name"
+                              />
+                              <div className={classes.fieldTight}>
+                                <Field
+                                  name={`xiaomiDevices[${index}].id`}
+                                  component={Input}
+                                  label="resources.jukeboxOutput.fields.id"
+                                  placeholder={suggestId(
+                                    values.xiaomiDevices?.[index]?.name,
+                                    'xiaomi',
+                                  )}
+                                  helperText={translate(
+                                    'resources.jukeboxOutput.helpers.idHint',
+                                    {
+                                      _: '留空会按名称自动生成；仅用于配置文件与接口调用。',
+                                    },
+                                  )}
+                                />
+                              </div>
+                            </div>
+                            <div className={classes.fieldTight}>
+                              <Field
+                                name={`xiaomiDevices[${index}].address`}
+                                component={Input}
+                                label="resources.jukeboxOutput.fields.address"
+                                placeholder="192.168.1.10"
+                                error={Boolean(
+                                  xiaomiDeviceErrors?.[index]?.address,
+                                )}
+                                helperText={
+                                  xiaomiDeviceErrors?.[index]?.address ||
+                                  translate(
+                                    'resources.jukeboxOutput.helpers.xiaomiAddress',
+                                    {
+                                      _: '音箱的局域网 IP，离线设备需手动填写。',
+                                    },
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className={classes.row}>
+                              <Field
+                                name={`xiaomiDevices[${index}].token`}
+                                component={Input}
+                                label="resources.jukeboxOutput.fields.token"
+                              />
+                              <Field
+                                name={`xiaomiDevices[${index}].did`}
+                                component={Input}
+                                label="resources.jukeboxOutput.fields.did"
+                              />
+                            </div>
+                            <div className={classes.fieldTight}>
+                              <Field
+                                name={`xiaomiDevices[${index}].model`}
+                                component={Input}
+                                label="resources.jukeboxOutput.fields.model"
+                                placeholder="l7a / s12 / l05b"
+                              />
+                            </div>
+                          </Box>
+                        ))}
+
+                        <div className={classes.sectionTitle}>
+                          {translate(
+                            'resources.jukeboxOutput.sections.xiaomiAccount',
+                            { _: '小米账号（所有音箱共用，可选）' },
+                          )}
                         </div>
                         <div className={classes.row}>
                           <Field
@@ -1136,9 +1343,7 @@ const OutputEditorDialog = ({ mode, output, onClose, onSaved }) => {
                     variant="contained"
                     color="primary"
                     disableElevation
-                    disabled={
-                      submitting || connectionIncomplete || !idSatisfied
-                    }
+                    disabled={submitting || (isBatch && batchIncomplete)}
                   >
                     {submitting ? (
                       <CircularProgress size={18} />

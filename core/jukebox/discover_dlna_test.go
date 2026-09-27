@@ -32,8 +32,7 @@ var _ = Describe("DiscoverRenderers", func() {
 		// Simulate one SSDP reply by pointing the stub at the fake device.
 		// The stub reuses the real describeRenderer against the test server.
 		discoverFunc = func(ctx context.Context) ([]DiscoveredRenderer, error) {
-			_ = ctx
-			name, model, err := describeRenderer(srv.URL + "/desc.xml")
+			name, model, err := describeRenderer(ctx, srv.URL+"/desc.xml")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(name).To(Equal("Living Room Speaker"))
 			Expect(model).To(Equal("TestRenderer/1.0"))
@@ -91,7 +90,7 @@ var _ = Describe("DiscoverRenderers", func() {
 		// with no more SSDP answers coming in.
 		time.AfterFunc(200*time.Millisecond, cancel)
 
-		renderers := collectRenderers(ctx, conn, func(location string) (string, string, error) {
+		renderers := collectRenderers(ctx, conn, func(_ context.Context, location string) (string, string, error) {
 			if strings.Contains(location, ":40000") {
 				return "", "", errors.New("unreachable")
 			}
@@ -107,12 +106,39 @@ var _ = Describe("DiscoverRenderers", func() {
 		Expect(renderers[1].Model).To(Equal("S12"))
 	})
 
+	// 回归：LOCATION 头来自未经认证的 UDP 包。放任它取，云实例元数据服务
+	// （169.254.169.254）之类的内网端点会被抓取，抓到的内容还会以
+	// friendlyName 的形式回显到发现结果里。
+	It("refuses to fetch a cloud metadata endpoint advertised via LOCATION", func() {
+		_, _, err := describeRenderer(context.Background(), "http://169.254.169.254/latest/meta-data/")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("non-LAN"))
+	})
+
+	Describe("isLANAddress", func() {
+		DescribeTable("accepts only addresses a DLNA renderer can live on",
+			func(ip string, allowed bool) {
+				Expect(isLANAddress(net.ParseIP(ip))).To(Equal(allowed))
+			},
+			Entry("private 192.168/16", "192.168.1.41", true),
+			Entry("private 10/8", "10.0.0.5", true),
+			Entry("private 172.16/12", "172.16.3.9", true),
+			Entry("loopback (renderer on the docker host itself)", "127.0.0.1", true),
+			Entry("cloud metadata service", "169.254.169.254", false),
+			Entry("link-local APIPA", "169.254.10.1", false),
+			Entry("public address", "8.8.8.8", false),
+			Entry("multicast (SSDP itself)", "239.255.255.250", false),
+			Entry("unspecified", "0.0.0.0", false),
+			Entry("nil", "", false),
+		)
+	})
+
 	It("returns an error from describeRenderer on non-200", func() {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 		}))
 		defer srv.Close()
-		_, _, err := describeRenderer(srv.URL + "/desc.xml")
+		_, _, err := describeRenderer(context.Background(), srv.URL+"/desc.xml")
 		Expect(err).To(HaveOccurred())
 		Expect(strings.Contains(err.Error(), "404")).To(BeTrue())
 	})

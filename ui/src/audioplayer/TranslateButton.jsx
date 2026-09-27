@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useRef } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { useTranslate, useNotify } from 'react-admin'
 import IconButton from '@material-ui/core/IconButton'
@@ -8,6 +8,7 @@ import TranslateIcon from '@material-ui/icons/Translate'
 import { makeStyles } from '@material-ui/core/styles'
 import httpClient from '../dataProvider/httpClient'
 import { updateSongLyric } from '../actions'
+import { isBilingualTrack } from '../reducers/playerReducer'
 
 const useStyles = makeStyles((theme) => ({
   active: {
@@ -32,18 +33,33 @@ const TranslateButton = ({
 
   const playerState = useSelector((state) => state.player || {})
   const current = playerState.current || {}
-  const isBilingual = !!playerState.bilingualActive
+  // 双语态必须按曲目判定：全局 boolean 会让"换歌后按钮仍显示双语"
+  const isBilingual = isBilingualTrack(playerState, id)
   const cachedBilingual = playerState.bilingualLyrics?.[id]
   const cachedOriginal =
     playerState.originalLyrics?.[id] ||
     (current.trackId === id ? current.lyric : '')
 
-  const [translating, setTranslating] = useState(false)
+  // 在飞的翻译请求按曲目记账。
+  // 以前是一个全局 boolean：给 song1 翻译期间切到 song2，song2 的按钮会被
+  // translating 一直卡住（点不动、也不显示自己需要翻译）；song1 的请求
+  // 结束后还会把 song2 的 loading 状态一起清掉。
+  const inFlightRef = useRef(new Set())
+  const [inFlight, setInFlight] = useState([])
+  const translating = inFlight.includes(id)
+  const beginRequest = useCallback((trackId) => {
+    inFlightRef.current.add(trackId)
+    setInFlight(Array.from(inFlightRef.current))
+  }, [])
+  const endRequest = useCallback((trackId) => {
+    inFlightRef.current.delete(trackId)
+    setInFlight(Array.from(inFlightRef.current))
+  }, [])
 
   const handleTranslate = useCallback(
     async (e) => {
       e.stopPropagation()
-      if (!id || isRadio || translating) {
+      if (!id || isRadio || inFlightRef.current.has(id)) {
         return
       }
 
@@ -79,17 +95,18 @@ const TranslateButton = ({
         type: 'info',
         autoHideDuration: 2000,
       })
-      setTranslating(true)
+      beginRequest(id)
+      let timer
 
       try {
         // Add 35-second client-side timeout to avoid endless spinning
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(
+        const timeoutPromise = new Promise((_, reject) => {
+          timer = setTimeout(
             () =>
               reject(new Error('翻译请求超时，请检查网络、代理或API密钥设置')),
             35000,
-          ),
-        )
+          )
+        })
 
         // Backend automatically resolves configured targetLanguage, engine, and API keys
         const fetchPromise = httpClient('/api/lyrics/translate', {
@@ -155,17 +172,19 @@ const TranslateButton = ({
           )
         }
       } finally {
-        setTranslating(false)
+        clearTimeout(timer)
+        endRequest(id)
       }
     },
     [
       id,
       isRadio,
-      translating,
       isBilingual,
       cachedBilingual,
       cachedOriginal,
       current.lyric,
+      beginRequest,
+      endRequest,
       dispatch,
       notify,
       translate,
@@ -176,7 +195,7 @@ const TranslateButton = ({
     async (e) => {
       e.preventDefault()
       e.stopPropagation()
-      if (!id || isRadio || translating) {
+      if (!id || isRadio || inFlightRef.current.has(id)) {
         return
       }
 
@@ -186,7 +205,7 @@ const TranslateButton = ({
         }),
         { type: 'info', autoHideDuration: 2500 },
       )
-      setTranslating(true)
+      beginRequest(id)
 
       try {
         const res = await httpClient('/api/lyrics/translate', {
@@ -225,10 +244,10 @@ const TranslateButton = ({
           { type: 'error' },
         )
       } finally {
-        setTranslating(false)
+        endRequest(id)
       }
     },
-    [id, isRadio, translating, dispatch, notify, translate],
+    [id, isRadio, beginRequest, endRequest, dispatch, notify, translate],
   )
 
   const tooltipTitle = translating

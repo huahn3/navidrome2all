@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"testing"
+	"time"
 
 	"github.com/navidrome/navidrome/conf"
 	. "github.com/onsi/ginkgo/v2"
@@ -307,3 +309,75 @@ var _ = Describe("MPD driver", func() {
 		})
 	})
 })
+
+// 回归测试：黑洞地址（TCP 连上但永不回数据）曾能把整个 jukebox 挂死。
+// 因为 gompd 走的是无超时的 textproto.Dial，而 manager 的所有命令都持全局锁，
+// 一次阻塞会让所有 /api/jukebox/* 永久挂起。
+func TestMPDDriver_DoesNotHangOnSilentHost(t *testing.T) {
+	// 起一个只接受连接、从不回应任何数据的 TCP 服务端
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("cannot listen: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		var conns []net.Conn
+		defer func() {
+			for _, c := range conns {
+				_ = c.Close()
+			}
+		}()
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conns = append(conns, c) // 接受但永不写入
+		}
+	}()
+
+	d := newMPDDriver(conf.JukeboxOutputDevice{Address: ln.Addr().String()})
+
+	done := make(chan error, 1)
+	go func() {
+		// Status 会走 connect()；如果这里超时，说明修复生效
+		_, err := d.GetState()
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error from a silent host, got nil")
+		}
+		// 错误信息要能说明是超时/不可达，而不是别的
+		if !strings.Contains(err.Error(), "timed out") && !strings.Contains(err.Error(), "cannot reach") {
+			t.Logf("error (acceptable): %v", err)
+		}
+	case <-time.After(mpdHandshakeTimeout + 10*time.Second):
+		t.Fatal("connect() hung on a silent host: the no-timeout bug is back")
+	}
+}
+
+// 不可达地址应该快速失败，而不是挂住
+func TestMPDDriver_UnreachableAddressFailsFast(t *testing.T) {
+	// 保留端口但不监听
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("cannot listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+
+	d := newMPDDriver(conf.JukeboxOutputDevice{Address: addr})
+	start := time.Now()
+	_, err = d.GetState()
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error for an unreachable address")
+	}
+	if elapsed > mpdConnectTimeout+5*time.Second {
+		t.Fatalf("took %s to fail, expected under %s", elapsed, mpdConnectTimeout+5*time.Second)
+	}
+}

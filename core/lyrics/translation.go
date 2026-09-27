@@ -85,7 +85,10 @@ type CachedSongSummary struct {
 }
 
 type BatchRetranslateStatus struct {
-	Running   bool      `json:"running"`
+	Running bool `json:"running"`
+	// Canceling is set once the user asked to stop but the worker has not
+	// drained yet: one TranslateSong call can take many seconds.
+	Canceling bool      `json:"canceling,omitempty"`
 	Total     int       `json:"total"`
 	Processed int       `json:"processed"`
 	Success   int       `json:"success"`
@@ -108,12 +111,27 @@ type TranslationService struct {
 	batchMu     sync.RWMutex
 	batchStatus BatchRetranslateStatus
 	batchCancel chan struct{}
+	// batchGen identifies the current worker generation. A canceled worker can
+	// outlive the cancel call (it only checks the flag between songs), and the
+	// user may start a new batch meanwhile. Without this counter the stale
+	// worker keeps writing counters into the new run and, worse, marks the
+	// *new* run as finished when it returns.
+	batchGen int
 }
 
 var (
 	globalTranslationService *TranslationService
 	translationServiceOnce   sync.Once
 )
+
+// ResetTranslationServiceForTest drops the singleton so the next
+// GetTranslationService rebuilds it. The service reads conf.Server.DataFolder to
+// locate its disk cache, and tests that point that at a temp dir need a fresh
+// instance.
+func ResetTranslationServiceForTest() {
+	translationServiceOnce = sync.Once{}
+	globalTranslationService = nil
+}
 
 func GetTranslationService(ds model.DataStore) *TranslationService {
 	translationServiceOnce.Do(func() {
@@ -440,6 +458,8 @@ func (s *TranslationService) StartBatchRetranslate(ctx context.Context) error {
 
 	cancelCh := make(chan struct{})
 	s.batchCancel = cancelCh
+	s.batchGen++
+	gen := s.batchGen
 	s.batchStatus = BatchRetranslateStatus{
 		Running:   true,
 		Total:     len(items),
@@ -450,13 +470,27 @@ func (s *TranslationService) StartBatchRetranslate(ctx context.Context) error {
 	}
 	s.batchMu.Unlock()
 
+	// mutate applies fn to the shared status only while this worker is still the
+	// current generation. Once a newer batch has started, every write from this
+	// (stale) worker is dropped instead of corrupting the new run.
+	mutate := func(fn func(st *BatchRetranslateStatus)) {
+		s.batchMu.Lock()
+		defer s.batchMu.Unlock()
+		if s.batchGen != gen {
+			return
+		}
+		fn(&s.batchStatus)
+	}
+
 	// The batch job must outlive the HTTP request that started it, so it cannot
 	// use the request context; cancellation goes through s.batchCancel.
 	go func() { //nolint:gosec // see above
 		defer func() {
-			s.batchMu.Lock()
-			s.batchStatus.Running = false
-			s.batchMu.Unlock()
+			mutate(func(st *BatchRetranslateStatus) {
+				st.Running = false
+				st.Canceling = false
+				st.Current = ""
+			})
 		}()
 
 		bgCtx := context.Background()
@@ -468,34 +502,34 @@ func (s *TranslationService) StartBatchRetranslate(ctx context.Context) error {
 			default:
 			}
 
-			s.batchMu.Lock()
-			s.batchStatus.Current = fmt.Sprintf("%s - %s", item.Title, item.Artist)
-			s.batchMu.Unlock()
+			mutate(func(st *BatchRetranslateStatus) {
+				st.Current = fmt.Sprintf("%s - %s", item.Title, item.Artist)
+			})
 
 			if s.ds == nil {
 				continue
 			}
 			mf, err := s.ds.MediaFile(bgCtx).Get(item.SongID)
 			if err != nil {
-				s.batchMu.Lock()
-				s.batchStatus.Processed++
-				s.batchStatus.Failed++
-				s.batchStatus.LastError = fmt.Sprintf("song %s not found", item.SongID)
-				s.batchMu.Unlock()
+				mutate(func(st *BatchRetranslateStatus) {
+					st.Processed++
+					st.Failed++
+					st.LastError = fmt.Sprintf("song %s not found", item.SongID)
+				})
 				continue
 			}
 
 			_, err = s.TranslateSong(bgCtx, mf, item.TargetLang, true)
-			s.batchMu.Lock()
-			s.batchStatus.Processed++
-			if err != nil {
-				s.batchStatus.Failed++
-				s.batchStatus.LastError = err.Error()
-				log.Warn(bgCtx, "Batch re-translation failed for song", "song", item.SongID, err)
-			} else {
-				s.batchStatus.Success++
-			}
-			s.batchMu.Unlock()
+			mutate(func(st *BatchRetranslateStatus) {
+				st.Processed++
+				if err != nil {
+					st.Failed++
+					st.LastError = err.Error()
+					log.Warn(bgCtx, "Batch re-translation failed for song", "song", item.SongID, err)
+				} else {
+					st.Success++
+				}
+			})
 
 			select {
 			case <-cancelCh:
@@ -523,7 +557,12 @@ func (s *TranslationService) CancelBatchRetranslate() {
 		default:
 			close(s.batchCancel)
 		}
-		s.batchStatus.Running = false
+		// Do NOT clear Running here: the worker only observes the cancel flag
+		// between songs, so it can still be inside a TranslateSong call for a
+		// long time. Clearing it immediately told the UI the job had stopped,
+		// which let the user start a second batch while this one kept running
+		// and both fought over the same counters.
+		s.batchStatus.Canceling = true
 	}
 }
 
@@ -645,7 +684,10 @@ func buildTranslationResult(songID, targetLang, engine, modelName string, origin
 				combinedB.WriteString(fmt.Sprintf("%s%s\n%s\n", timeTag, orig, showTrans))
 				inlineB.WriteString(fmt.Sprintf("%s%s / %s\n", timeTag, orig, showTrans))
 			} else {
-				bilingualB.WriteString(fmt.Sprintf("%s%s\n%s%s\n", timeTag, orig, timeTag, orig))
+				// 译文与原文相同（或引擎没给出译文）时只写一遍原文。
+				// 这里曾经写成 timeTag+orig 两次，导致 bilingualLrc 出现
+				// "[01:01.05]xxx\n[01:01.05]xxx" 的重复行。
+				bilingualB.WriteString(fmt.Sprintf("%s%s\n", timeTag, orig))
 				combinedB.WriteString(fmt.Sprintf("%s%s\n", timeTag, orig))
 				inlineB.WriteString(fmt.Sprintf("%s%s\n", timeTag, orig))
 			}

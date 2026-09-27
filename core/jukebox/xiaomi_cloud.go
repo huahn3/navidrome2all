@@ -219,9 +219,9 @@ func (c *xiaomiCloudClient) login() error {
 			desc, _ = step2["description"].(string)
 		}
 		if notif, _ := step2["notificationUrl"].(string); notif != "" {
-			return fmt.Errorf("xiaomi cloud: 2FA required (code %.0f: %s)", code, desc)
+			return fmt.Errorf("xiaomi cloud: 2FA required (code %.0f: %s)", code, c.scrub(desc))
 		}
-		return fmt.Errorf("xiaomi cloud: login rejected (code %.0f: %s)", code, desc)
+		return fmt.Errorf("xiaomi cloud: login rejected (code %.0f: %s)", code, c.scrub(desc))
 	}
 	ssecurity, _ := step2["ssecurity"].(string)
 	location, _ := step2["location"].(string)
@@ -239,6 +239,40 @@ func (c *xiaomiCloudClient) login() error {
 
 	// Step 3: follow the location URL; the reply sets the serviceToken cookie.
 	return c.followLocation(location)
+}
+
+// scrub removes this client's own secrets from a free-form upstream string and
+// bounds its length. The passport API echoes free-form `desc` text, and those
+// errors travel to the API client verbatim (see jukeboxDriverError), so an echo
+// of the passToken/password would otherwise end up in HTTP responses and logs.
+func (c *xiaomiCloudClient) scrub(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	c.mu.Lock()
+	secrets := []string{
+		c.password, c.passToken, c.ssecurity, c.minaServiceToken,
+	}
+	for name, val := range c.cookies {
+		// userId is an identifier, not a secret; the rest are session tokens.
+		if name != "userId" {
+			secrets = append(secrets, val)
+		}
+	}
+	c.mu.Unlock()
+
+	for _, secret := range secrets {
+		// Short values would redact unrelated text (and a 1-char "secret"
+		// would shred the whole message).
+		if len(secret) < 8 {
+			continue
+		}
+		msg = strings.ReplaceAll(msg, secret, "[redacted]")
+	}
+	if len(msg) > 200 {
+		msg = msg[:200] + "..."
+	}
+	return msg
 }
 
 // loginWithPassToken authenticates using an existing passToken without needing a password.
@@ -268,7 +302,7 @@ func (c *xiaomiCloudClient) loginWithPassToken() error {
 		if desc == "" {
 			desc, _ = step["description"].(string)
 		}
-		return fmt.Errorf("xiaomi cloud: passToken login rejected (code %.0f: %s)", code, desc)
+		return fmt.Errorf("xiaomi cloud: passToken login rejected (code %.0f: %s)", code, c.scrub(desc))
 	}
 	ssecurity, _ := step["ssecurity"].(string)
 	location, _ := step["location"].(string)

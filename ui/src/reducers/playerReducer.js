@@ -28,7 +28,10 @@ const initialState = {
   volume: config.defaultUIVolume / 100,
   savedPlayIndex: 0,
   outputDevice: BROWSER_DEVICE,
-  bilingualActive: false,
+  // 双语态按曲目隔离：只有 bilingualTrackId 指向当前曲目才算双语生效。
+  // 以前只有一个全局 boolean，给任意曲目写歌词都会把当前曲目的开关打开，
+  // 表现为"换歌后翻译按钮显示已双语，点一下却提示已恢复原文"。
+  bilingualTrackId: null,
   originalLyrics: {},
   bilingualLyrics: {},
   pendingSeekTime: null,
@@ -137,7 +140,7 @@ const reducePlayTracks = (state, { data, id }) => {
     queue,
     playIndex,
     clear: true,
-    bilingualActive: false,
+    bilingualTrackId: null,
     originalLyrics,
   }
 }
@@ -153,7 +156,7 @@ const reduceSetTrack = (state, { data }) => {
     queue: [item],
     playIndex: 0,
     clear: true,
-    bilingualActive: false,
+    bilingualTrackId: null,
     originalLyrics,
   }
 }
@@ -201,7 +204,7 @@ const reduceTakeoverTrack = (
     queue: [item],
     playIndex: 0,
     clear: true,
-    bilingualActive: targetBilingual,
+    bilingualTrackId: targetBilingual ? (item.trackId ?? null) : null,
     originalLyrics,
     pendingSeekTime: positionSec || 0,
     pendingState: targetState,
@@ -292,6 +295,10 @@ const reduceSyncQueue = (state, { data: { audioInfo, audioLists } }) => {
   }
 }
 
+// 双语态判定：必须是"当前曲目"且"该曲目被标记为双语"。
+export const isBilingualTrack = (state, trackId) =>
+  !!trackId && state.bilingualTrackId === trackId
+
 const reduceCurrent = (state, { data }) => {
   const current = data.ended ? {} : { ...data }
   const currentTrackId = current.trackId || (current.song && current.song.id)
@@ -309,7 +316,7 @@ const reduceCurrent = (state, { data }) => {
     currentTrackId &&
     current.lyric &&
     !originalLyrics[currentTrackId] &&
-    !state.bilingualActive
+    !isBilingualTrack(state, currentTrackId)
   ) {
     originalLyrics[currentTrackId] = current.lyric
   }
@@ -329,7 +336,7 @@ const reduceCurrent = (state, { data }) => {
   return {
     ...state,
     current,
-    bilingualActive: isNewTrack ? false : state.bilingualActive,
+    bilingualTrackId: isNewTrack ? null : state.bilingualTrackId,
     originalLyrics,
     playIndex: pending ? state.playIndex : undefined,
     clear: pending ? state.clear : false,
@@ -357,6 +364,7 @@ const reduceUpdateSongLyric = (
 ) => {
   const originalLyrics = { ...state.originalLyrics }
   const bilingualLyrics = { ...state.bilingualLyrics }
+  const isCurrentTrack = !!state.current && state.current.trackId === trackId
 
   if (isBilingual) {
     bilingualLyrics[trackId] = lyric
@@ -374,11 +382,21 @@ const reduceUpdateSongLyric = (
     state.current && state.current.trackId === trackId
       ? { ...state.current, lyric }
       : state.current
+  // 只有作用在当前曲目上的写入才能改变双语开关。
+  // 给别的曲目（预取/翻译队列里的下一首）写歌词，不应把正在播的这首切成"双语"。
+  const bilingualTrackId = isCurrentTrack
+    ? isBilingual
+      ? trackId
+      : null
+    : state.bilingualTrackId === trackId && !isBilingual
+      ? null
+      : state.bilingualTrackId
+
   return {
     ...state,
     queue,
     current,
-    bilingualActive: !!isBilingual,
+    bilingualTrackId,
     originalLyrics,
     bilingualLyrics,
   }

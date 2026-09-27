@@ -465,11 +465,12 @@
         "mpdSetup": "大多数 NAS 的 MPD 就在同一台机器上、默认端口 6600，先扫描一下最快。手动填时地址写 host:port，例如 192.168.1.10:6600。",
         "idHint": "留空会按名称自动生成；仅用于配置文件与接口调用。",
         "advancedHint": "一般不用填。只有扫码失败、或需要手工指定令牌/路径映射时才用得上。",
-        "xiaomiAddress": "音箱的局域网 IP，扫码登录后会自动填好。",
+        "xiaomiAddress": "音箱的局域网 IP，离线设备需手动填写。",
         "mpdAddress": "扫描最省事：多数 NAS 的 MPD 就在本机网段的 6600 端口。也可以手填 host:port。",
         "dlnaAddress": "扫描后点选结果即可；要填设备描述文档 URL，不是 /AVTransport/control。",
         "dlnaNoExtra": "DLNA 不需要额外设置，保存即可使用。",
-        "idAuto": "将自动生成为：%{id}（可自行修改）"
+        "idAuto": "将自动生成为：%{id}（可自行修改）",
+        "xiaomiPerDevice": "名称、ID 与地址都已预填，可自行修改。地址不能是 0.0.0.x（那是小米云给离线设备回的占位地址）。"
       },
       "sourceValues": {
         "config": "配置文件",
@@ -494,7 +495,8 @@
         "deleted": "输出设备已删除",
         "selected": "已切换到「{{name}}」播放",
         "mpdOk": "连接成功，密码正确。",
-        "batchSaved": "已添加 %{count} 台输出设备%{failed}"
+        "batchSaved": "已添加 %{count} 台输出设备%{failed}",
+        "batchPartial": "{{count}} 台失败：{{detail}}"
       },
       "localOutput": "本机浏览器",
       "localOutputHint": "在这台设备上直接播放",
@@ -515,13 +517,17 @@
         "xiaomi": "小爱音箱",
         "mpd": "MPD",
         "pathMap": "路径映射（可选）",
-        "dlna": "连接"
+        "dlna": "连接",
+        "xiaomiDevices": "每台音箱的配置",
+        "xiaomiAccount": "小米账号（所有音箱共用，可选）"
       },
       "errors": {
         "idRequired": "需要填写 ID",
         "idInvalid": "ID 只能包含字母、数字、下划线和短横线（1-64 位）",
         "nameRequired": "需要填写名称",
-        "addressRequired": "需要填写地址"
+        "addressRequired": "需要填写地址",
+        "placeholderAddress": "0.0.0.x 是占位地址，请填写音箱真实的局域网 IP",
+        "idDuplicate": "ID 与其它音箱重复了"
       },
       "hint": {
         "mpdScanHint": "MPD 没有广播机制，扫描会依次探测本机各网段的 6600 端口（约 1-2 秒）。",
@@ -532,7 +538,9 @@
       "steps": {
         "type": "1. 类型",
         "connection": "2. 连接",
-        "advanced": "3. 高级"
+        "advanced": "3. 高级",
+        "xiaomiPick": "选择要添加的音箱",
+        "xiaomiPicked": "已选 {{count}} 台：{{names}}。点「下一步」逐台确认名称、ID 与地址。"
       },
       "typeCards": {
         "xiaomi": {
@@ -883,7 +891,8 @@
       "batchStartFailed": "启动失败: %{reason}",
       "batchFinished": "所有歌曲重新翻译完成！成功 %{success} 首，失败 %{failed} 首。",
       "batchCanceled": "已请求终止批量重新翻译任务",
-      "note.unknown": ""
+      "note.unknown": "",
+      "batchStoppingTitle": "正在停止批量翻译，等待当前歌曲处理完毕..."
     },
     "albumList": "专辑",
     "playlists": "歌单",
@@ -939,7 +948,8 @@
     "translateFailed": "歌词翻译失败，请检查网络或API配置",
     "retranslating": "正在重新翻译...",
     "retranslateSuccess": "已重新翻译",
-    "retranslateFailed": "重新翻译失败"
+    "retranslateFailed": "重新翻译失败",
+    "saveQueue": "保存当前播放队列"
   },
   "about": {
     "links": {

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -66,11 +65,11 @@ func (p *BaiduProvider) Translate(ctx context.Context, lines []string, targetLan
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("baidu api request: %w", err)
+		return nil, fmt.Errorf("baidu api request: %w", sanitizeURLError(err))
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readLimited(resp, maxResponseBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading baidu response: %w", err)
 	}

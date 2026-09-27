@@ -305,7 +305,8 @@ describe('playerReducer', () => {
       expect(state.outputDevice).toBe('xiaomi_l7a')
       expect(state.volume).toBe(0.65)
       expect(state.mode).toBe('single')
-      expect(state.bilingualActive).toBe(true)
+      // 双语态按曲目记录：接管后当前曲目被标记为双语
+      expect(state.bilingualTrackId).toBe('track-abc')
 
       // Test clearPendingSeek clears both pendingSeekTime and pendingState
       const clearedState = playerReducer(state, clearPendingSeek())

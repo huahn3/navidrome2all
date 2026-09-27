@@ -12,6 +12,7 @@ import (
 	"github.com/navidrome/navidrome/core/jukebox"
 	"github.com/navidrome/navidrome/core/scrobbler"
 	"github.com/navidrome/navidrome/log"
+	"github.com/navidrome/navidrome/model"
 	"github.com/navidrome/navidrome/model/request"
 	"github.com/navidrome/navidrome/server"
 	"github.com/navidrome/navidrome/server/events"
@@ -181,8 +182,26 @@ func (api *Router) getPlaybackSessionByID(w http.ResponseWriter, r *http.Request
 	http.Error(w, "session not found", http.StatusNotFound)
 }
 
+// canTakeOverSession 决定 caller 能否接管 target 会话。
+// 拆成纯函数是为了能脱离 play tracker 单例直接测这条安全规则。
+func canTakeOverSession(caller model.User, target *scrobbler.PlaybackSession) bool {
+	if target == nil {
+		return false
+	}
+	// 管理员可以接管任何人的会话（共享音箱场景需要）；普通用户只能接管自己的。
+	return caller.IsAdmin || target.UserId == caller.ID
+}
+
 func (api *Router) takeoverPlaybackSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	// 接管会 pause 远程输出（下面直接调 jukebox singleton），所以必须先过
+	// jukeboxGuard：否则 Jukebox.Enabled=false 的部署也能被这个端点操作，
+	// 而且它绕过了 Jukebox.AdminOnly（普通用户本不该控制远程设备）。
+	// 注意：这里用 jukeboxGuard 而不是 jukeboxAdminGuard——上面已经有针对
+	// "单个会话归属"的独立校验，AdminOnly 针对的是全局设备控制权。
+	if !jukeboxGuard(w) {
+		return
+	}
 	sessionID := chi.URLParam(r, "id")
 	if sessionID == "" {
 		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
@@ -229,46 +248,58 @@ func (api *Router) takeoverPlaybackSession(w http.ResponseWriter, r *http.Reques
 			break
 		}
 	}
+	if targetSession == nil {
+		http.Error(w, "session not found or already stopped", http.StatusNotFound)
+		return
+	}
+
+	// 归属校验：接管是**写**操作（会 pause/stop 对方的播放、改写对方上报的状态），
+	// 不能像读取那样对全站用户开放。普通用户只能接管自己的会话，admin 才能跨用户
+	// （共享音箱场景下管理员本来就需要这个能力）。
+	caller, ok := request.UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	if !canTakeOverSession(caller, targetSession) {
+		http.Error(w, "not allowed to take over another user's session", http.StatusForbidden)
+		return
+	}
 
 	targetState := scrobbler.StatePaused
 	if req.Action == "stop" {
 		targetState = scrobbler.StateStopped
 	}
 
-	var sessionResp *PlaybackSessionResponse
-	var songID string
-	var posMs int64
-	if targetSession != nil {
-		songID = targetSession.MediaFile.ID
-		posMs = targetSession.PositionMs
-		// Snapshot with the state the taker is imposing, then convert with the
-		// shared mapper so the response carries the same fields as the list
-		// endpoint (artistId/albumId/isCurrentSession used to be missing here).
-		snapshot := *targetSession
-		snapshot.State = targetState
-		snapshot.LastReport = time.Now()
-		resp := sessionResponse(&snapshot, "")
-		sessionResp = &resp
+	// Snapshot with the state the taker is imposing, then convert with the
+	// shared mapper so the response carries the same fields as the list
+	// endpoint (artistId/albumId/isCurrentSession used to be missing here).
+	snapshot := *targetSession
+	snapshot.State = targetState
+	snapshot.LastReport = time.Now()
+	respSnapshot := sessionResponse(&snapshot, "")
+	sessionResp := &respSnapshot
 
-		// Report state to tracker to cleanly stop or pause the remote session
-		_ = tracker.ReportPlayback(ctx, scrobbler.ReportPlaybackParams{
-			MediaId:        targetSession.MediaFile.ID,
-			PositionMs:     targetSession.PositionMs,
-			State:          targetState,
-			PlaybackRate:   targetSession.PlaybackRate,
-			IgnoreScrobble: true,
-			ClientId:       targetSession.PlayerId,
-			ClientName:     targetSession.PlayerName,
-			OutputDevice:   targetSession.OutputDevice,
-			Volume:         targetSession.Volume,
-			PlayMode:       targetSession.PlayMode,
-			Bilingual:      targetSession.Bilingual,
-		})
-	}
+	// Report state to tracker to cleanly stop or pause the remote session
+	_ = tracker.ReportPlayback(ctx, scrobbler.ReportPlaybackParams{
+		MediaId:        targetSession.MediaFile.ID,
+		PositionMs:     targetSession.PositionMs,
+		State:          targetState,
+		PlaybackRate:   targetSession.PlaybackRate,
+		IgnoreScrobble: true,
+		ClientId:       targetSession.PlayerId,
+		ClientName:     targetSession.PlayerName,
+		OutputDevice:   targetSession.OutputDevice,
+		Volume:         targetSession.Volume,
+		PlayMode:       targetSession.PlayMode,
+		Bilingual:      targetSession.Bilingual,
+	})
+	songID := targetSession.MediaFile.ID
+	posMs := targetSession.PositionMs
 
 	// Output device routing: if taker chooses local browser output, pause remote jukebox if active
 	targetOutput := req.TargetOutput
-	if targetOutput == "" && targetSession != nil && targetSession.OutputDevice != "" {
+	if targetOutput == "" && targetSession.OutputDevice != "" {
 		targetOutput = targetSession.OutputDevice
 	}
 	if targetOutput == "" || targetOutput == "browser" || targetOutput == "local" || targetOutput == jukebox.BrowserOutputID {
@@ -277,14 +308,9 @@ func (api *Router) takeoverPlaybackSession(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	outDev := ""
-	vol := 0
-	mode := ""
-	if targetSession != nil {
-		outDev = targetSession.OutputDevice
-		vol = targetSession.Volume
-		mode = targetSession.PlayMode
-	}
+	outDev := targetSession.OutputDevice
+	vol := targetSession.Volume
+	mode := targetSession.PlayMode
 
 	// Broadcast SSE event so the taken-over client immediately silences its local audio
 	events.GetBroker().SendBroadcastMessage(ctx, &events.PlaybackHandoff{

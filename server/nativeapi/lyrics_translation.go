@@ -65,7 +65,7 @@ type translateRequest struct {
 
 func (api *Router) translateSong(w http.ResponseWriter, r *http.Request) {
 	var req translateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -93,8 +93,11 @@ func (api *Router) translateSong(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, lyrics.ErrMissingAPIKey):
 			http.Error(w, "translation API key not configured", http.StatusBadRequest)
 		default:
+			// 上游错误里可能夹带凭据：Gemini 之前把 API Key 放在 URL query，
+			// 而 net/http 的 *url.Error 会把完整 URL 写进 Error()。这个端点
+			// 只有"已登录"要求，任何用户都能调，所以绝不能把原始错误回显。
 			log.Error(r.Context(), "Error translating lyrics", "song", songID, err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "translation failed, see server logs for details", http.StatusInternalServerError)
 		}
 		return
 	}

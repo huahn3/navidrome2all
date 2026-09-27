@@ -128,6 +128,13 @@ func GetPlayTracker(ds model.DataStore, broker events.Broker, pluginManager Plug
 	})
 }
 
+// ResetInstance drops the singleton play tracker. Only for tests: the tracker
+// captures the DataStore it was built with, so a test that swaps the mock store
+// has to force a rebuild or it keeps querying the previous one.
+func ResetInstance() {
+	singleton.DeleteInstance[*playTracker]()
+}
+
 // NewPlayTracker creates a new PlayTracker instance. For normal usage, the PlayTracker has to be a singleton,
 // returned by the GetPlayTracker function above. This constructor is exported for testing.
 func NewPlayTracker(ds model.DataStore, broker events.Broker, pluginManager PluginLoader) PlayTracker {

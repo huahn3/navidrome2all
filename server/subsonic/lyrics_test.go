@@ -2,6 +2,7 @@ package subsonic
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 
 	"github.com/navidrome/navidrome/conf"
@@ -838,5 +839,102 @@ var _ = Describe("GetLyricsBySongId", func() {
 				},
 			},
 		})
+	})
+})
+
+// 回归：bilingual=true 时，译文与原文相同的行曾被原样拼接上去，
+// 同一句歌词显示两遍。引擎对专有名词/纯外文歌词常原样返回，所以这条路径
+// 一定会踩到。
+var _ = Describe("GetLyricsBySongId bilingual dedup", func() {
+	var router *Router
+	mockRepo := &mockedMediaFile{MockMediaFileRepo: tests.MockMediaFileRepo{}}
+	var tmpDir string
+
+	const bilingualLyrics = "[00:18.80]We're no strangers to love\n[00:22.801]You know the rules and so do I"
+	var times = []int64{18800, 22801}
+
+	// 预置磁盘缓存，让 TranslateSong 在 force=false 时直接命中，不去调外部引擎
+	writeCache := func(lines []map[string]any) {
+		dir := filepath.Join(tmpDir, "lyrics_translations")
+		Expect(os.MkdirAll(dir, 0o755)).To(Succeed())
+		trans := map[string]any{
+			"songId":     "1",
+			"targetLang": "zh-CN",
+			"engine":     "test",
+			"model":      "test",
+			"lines":      lines,
+		}
+		b, err := json.Marshal(trans)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(os.WriteFile(filepath.Join(dir, "1_zh-CN.json"), b, 0o644)).To(Succeed())
+	}
+
+	BeforeEach(func() {
+		ds := &tests.MockDataStore{MockedMediaFile: mockRepo}
+		router = New(ds, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, lyrics.NewLyrics(ds, nil), nil, nil)
+		DeferCleanup(configtest.SetupConfig())
+		conf.Server.LyricsPriority = "embedded,.lrc"
+		conf.Server.LyricsTranslation.Enabled = true
+		conf.Server.LyricsTranslation.Engine = "test"
+		conf.Server.LyricsTranslation.TargetLanguage = "zh-CN"
+
+		tmpDir = GinkgoT().TempDir()
+		conf.Server.DataFolder = conf.NewDir(tmpDir)
+		lyrics.ResetTranslationServiceForTest()
+
+		syncedList, _ := model.ParseLyrics(GinkgoT().Context(), ".lrc", "eng", []byte(bilingualLyrics))
+		synced, _ := syncedList.Main()
+		lyricsJson, err := json.Marshal(model.LyricList{synced})
+		Expect(err).ToNot(HaveOccurred())
+		mockRepo.SetData(model.MediaFiles{{
+			ID:     "1",
+			Artist: "Rick Astley",
+			Title:  "Never Gonna Give You Up",
+			Lyrics: string(lyricsJson),
+		}})
+	})
+
+	mainLines := func(r *responses.LyricsList) []responses.Line {
+		for _, l := range r.StructuredLyrics {
+			if l.Kind == "" || l.Kind == "original" {
+				return l.Line
+			}
+		}
+		return nil
+	}
+
+	It("does not duplicate a line whose translation equals the original", func() {
+		// 第 1 行译文 == 原文（引擎原样返回），第 2 行是真译文
+		writeCache([]map[string]any{
+			{"index": 0, "start": times[0], "original": "We're no strangers to love",
+				"translation": "We're no strangers to love"},
+			{"index": 1, "start": times[1], "original": "You know the rules and so do I",
+				"translation": "你懂的规则也一样"},
+		})
+
+		response, err := router.GetLyricsBySongId(newGetRequest("id=1&bilingual=true"))
+		Expect(err).ToNot(HaveOccurred())
+		lines := mainLines(response.LyricsList)
+		Expect(lines).To(HaveLen(2))
+		// 关键断言：没有 "原文\n原文" 的重复
+		Expect(lines[0].Value).To(Equal("We're no strangers to love"))
+		// 真译文仍然拼上去了（防止修复过头）
+		Expect(lines[1].Value).To(ContainSubstring("你懂的规则也一样"))
+	})
+
+	It("treats a whitespace-only difference as identical", func() {
+		writeCache([]map[string]any{
+			{"index": 0, "start": times[0], "original": "We're no strangers to love",
+				"translation": "  We're no strangers to love  "},
+			{"index": 1, "start": times[1], "original": "You know the rules and so do I",
+				"translation": "   "},
+		})
+
+		response, err := router.GetLyricsBySongId(newGetRequest("id=1&bilingual=true"))
+		Expect(err).ToNot(HaveOccurred())
+		lines := mainLines(response.LyricsList)
+		Expect(lines).To(HaveLen(2))
+		Expect(lines[0].Value).To(Equal("We're no strangers to love"))
+		Expect(lines[1].Value).To(Equal("You know the rules and so do I"))
 	})
 })

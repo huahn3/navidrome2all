@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -74,17 +73,17 @@ func (p *ZhipuProvider) Translate(ctx context.Context, lines []string, targetLan
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("zhipu api request: %w", err)
+		return nil, fmt.Errorf("zhipu api request: %w", sanitizeURLError(err))
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readLimited(resp, maxResponseBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading zhipu response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("zhipu api returned status %d: %s", resp.StatusCode, string(respBytes))
+		return nil, upstreamError("zhipu", resp.StatusCode, respBytes)
 	}
 
 	var res zhipuChatResponse

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -63,8 +62,11 @@ func (p *GeminiProvider) Translate(ctx context.Context, lines []string, targetLa
 	if baseURL == "" {
 		baseURL = "https://generativelanguage.googleapis.com"
 	}
-	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s",
-		baseURL, url.PathEscape(model), url.QueryEscape(cfg.ApiKey))
+	// API Key 走请求头而不是 query：net/http 的 *url.Error 会把完整 URL 写进
+	// Error()，而它只遮蔽 userinfo 里的密码、不处理 query，密钥会一路流进日志
+	// 和 HTTP 响应（实测可达）。Gemini 官方同时支持 x-goog-api-key 头。
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent",
+		baseURL, url.PathEscape(model))
 
 	prompt := buildPrompt(lines, targetLang)
 
@@ -93,20 +95,23 @@ func (p *GeminiProvider) Translate(ctx context.Context, lines []string, targetLa
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if cfg.ApiKey != "" {
+		req.Header.Set("x-goog-api-key", cfg.ApiKey)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("gemini api request: %w", err)
+		return nil, fmt.Errorf("gemini api request: %w", sanitizeURLError(err))
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readLimited(resp, maxResponseBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading gemini response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gemini api returned status %d: %s", resp.StatusCode, string(respBytes))
+		return nil, upstreamError("gemini", resp.StatusCode, respBytes)
 	}
 
 	var res geminiResponse

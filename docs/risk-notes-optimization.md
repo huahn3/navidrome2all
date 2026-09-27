@@ -806,3 +806,282 @@ CSS 变量由浏览器解析，主题一变立刻生效，不受 JSS 缓存影�
 8. **i18n key 一律写字面量映射表，不要用模板字符串拼**。拼出来的 key 校验器抓不到，
    一旦语言包里命名对不上就是静默回退（表现为"某处文案变成语言码/英文"，
    而且中文界面完全看不出来）。改完 i18n 跑 `python3 scripts/check-i18n-keys.py`。
+
+---
+
+## 12. 安全与状态机修复（2026-09-28，按优先级 6 批）
+
+这一批来自一次全面代码审查，全部**已在本地验证通过**，但**没有推送镜像**。
+线上镜像（`huhan333/navidrome2all:latest`）还是本批之前的状态。
+
+### 12.1 Gemini 密钥从 URL 挪到请求头
+
+`provider_gemini.go` 以前把 key 拼在 query 里
+（`.../v1beta/models/x?key=XXX`）。后果有两层：
+
+- `net/http` 只遮蔽 URL **userinfo** 里的密码，**query 参数原样保留**
+  （见 `client.go` 的 `stripPassword`），所以任何 `*url.Error` 都会把完整
+  URL 连同 key 打进日志；而 `jukeboxDriverError` 那种"驱动原文回给客户端"
+  的路径同理。
+- key 会进浏览器/代理/上游的任何一份访问记录。
+
+改为 `x-goog-api-key` 请求头（官方推荐方式），并新增
+`core/lyrics/provider_errors.go`：`sanitizeURLError` 重建只保留 `Op` + 原因
+的错误，`sanitizeBody` 把上游错误体截到 512 字节，响应体读取限制 4 MiB。
+5 个 provider（gemini/zhipu/openai/baidu/google）统一走这套。
+`/api/lyrics/translate` 也不再把内部错误回显给前端，请求体限 64 KiB。
+
+**注意**：`sanitizeBody` 只截断，**不做**内容脱敏——如果某个引擎自己在错误
+体里回显了密钥，仍需按引擎单独处理。
+
+### 12.2 播放接管补归属校验
+
+`POST /api/playback/sessions/{id}/takeover` 以前对**任何登录用户**开放，
+且目标会话不存在时也返回 200。接管是写操作（pause/stop 对方的播放、改写
+对方上报的状态），不能和读取一样全站开放。
+
+现在：走 `jukeboxGuard`（本 fork 输出功能总开关）→ 目标不存在 404 →
+`canTakeOverSession` 判定（普通用户只能接管自己的，admin 可跨用户，
+共享音箱场景本来就需要）。
+
+**顺带的测试基建问题**：`scrobbler.GetPlayTracker` 是单例且**捕获创建时的
+DataStore**。测试换 mock store 后它仍在查旧 store，报 `data not found`。
+为此在 `core/scrobbler/play_tracker.go` 加了 `ResetInstance()`（仅测试用），
+并在 `playback_sessions_test.go` 的 `BeforeEach/AfterEach` 里调用。
+写涉及 play tracker 的测试时记住这条。
+
+### 12.3 MPD 驱动加超时（优先级最高的可用性问题）
+
+gompd 的 `mpd.Dial` 走 `textproto.Dial`（裸 `net.Dial`，**无 Timeout**），
+且不暴露底层连接、设不了 `deadline`。而 manager 的所有命令都持**同一把
+全局锁**：一个黑洞地址（TCP 连上但不回 greeting）就能让所有
+`/api/jukebox/*` 永久挂起。
+
+双保险（`core/jukebox/driver_mpd.go`）：
+
+1. `probeReachable()`：先自己 `net.DialTimeout` 探一次，5s 内不可达直接失败
+   （覆盖"地址黑洞"这个主要场景）。
+2. 整个拨号+握手放进 goroutine + 8s 定时器兜底（覆盖"连上了不回 greeting"）。
+   这个 goroutine 会一直阻塞在读 greeting 上，但它**不持有任何锁**，
+   调用方已返回、全局锁随之释放。
+
+回归测试 `TestMPDDriver_DoesNotHangOnSilentHost`（起一个只 accept 不回数据的
+服务端，断言 18s 内返回错误）就是防止这个 bug 回来的。
+
+### 12.4 Jukebox 选设备/改配置的状态机
+
+- **`Select`**：以前"先 `Stop()` 旧设备、再 `factory()` 新驱动"。factory 失败时
+  旧设备已被静音，但 `m.selected`/`m.driver` 仍指向它——对外报告"当前输出 =
+  旧设备"而实际已停，且没有回滚路径。改成**先建好新驱动、成功后才停旧的**。
+- **`SetStoredOutputs`**：以前**无条件**重建当前选中的驱动，于是在"输出设备"
+  页新增/修改一个**无关**设备就会打断正在播放的音乐（小米还得重做一次握手，
+  DLNA 的 seek 校验协程也被作废）。改成只在**当前选中设备的配置真的变了**
+  时重建。
+  > 踩坑：比较必须拿**替换前**的 `stored` 快照。写成"替换后查当前配置再比较"
+  > 等于自己比自己，测试直接失败（`rebuilds the driver when the selected output
+  > configuration changes`）。
+
+### 12.5 双语态改为按曲目隔离
+
+`bilingualActive` 以前是**全局 boolean**，而 `bilingualLyrics`/`originalLyrics`
+是按 trackId 的。后果：给 song1 开双语后切到 song2，song2 的按钮也显示"已双语"，
+点一下却提示"已恢复原文歌词"（song2 从未被翻译）。
+
+现在 reducer 记 `bilingualTrackId`，判定统一走导出的纯函数
+`isBilingualTrack(state, trackId)`（`ui/src/reducers/playerReducer.js`）。
+注意：
+
+- 上报给后端的 wire 字段**仍是 boolean**（`subsonic/index.js` /
+  `NowPlayingPanel` 的协议没变），只是语义变成"当前曲目是否双语"。
+- `reduceSyncQueue`/`reduceCurrent` 里"防回滚"的守卫也改用同一个判定。
+- `TranslateButton` 的在飞请求改成**按曲目记账**（`inFlight` Set）。
+  以前一个全局 boolean 会导致：给 song1 翻译期间切到 song2，song2 点不动；
+  song1 请求结束还会顺手清掉 song2 的 loading。
+  顺带修了 35s 超时的 `setTimeout` **从未被 clear**（每次翻译泄漏一个定时器）。
+- `TranslateButton`/`PlayerToolbar` 因此 import 了 `playerReducer`，
+  两个测试文件里对 `../actions` 的**整模块 mock** 会因传递依赖报
+  `No "BROWSER_DEVICE" export`，已改成 `importOriginal` 的 partial mock。
+
+### 12.6 Player 渲染性能
+
+`options` 的 `useMemo` 依赖是 `[playerState, defaultOptions]`——**整个 store**。
+任何状态变化（拖音量、切歌、歌词态）都产出全新 `options` 对象，而它是
+`ReactJkMusicPlayer` 的 props，等于每次都触发内核重渲染；里面
+`queue.map()` 出的新数组让内核每次都看到"新队列"。
+
+改成逐字段依赖 + `audioLists` 单独 `useMemo`（依赖 `playerState.queue`）。
+音量轮询侧本来就有 `VOLUME_EPSILON` 守卫，不会在设备回报同一个值时反复
+dispatch，无需额外节流。
+
+### 12.7 无障碍
+
+`PlayerToolbar` 的保存队列按钮、`LyricsTranslation` 的刷新缓存按钮都是纯
+图标按钮且**没有可访问名**（Tooltip 不算）。补了 `aria-label`，并按
+AGENTS 的三份 i18n 同步（新增 `player.saveQueue`）。
+
+### 12.8 `/api/config` 脱敏补全
+
+`server/nativeapi/config.go` 的掩码遍历器以前**只递归 map，不递归 slice**，
+于是 `Jukebox.Outputs`（列表）里每一项的 MPD 口令 / 小米 `Token` / `PassToken` /
+`Account` 都**原样**返回给了前端。同时 `LyricsTranslation` 的 `apiKey`、
+`secretKey`、`proxyUrl`（可能内嵌 `user:pw@`）也没进掩码表。
+
+加了 slice 递归 + 7 条全掩码路径。注意 `LyricsTranslationOptions` **带 json tag**，
+所以键名是**小写** `apiKey`/`engine`；`JukeboxOutputDevice` 没有 tag，键名是 Go 字段名。
+
+### 12.9 DLNA 发现：SSRF + 总超时
+
+SSDP 的 `LOCATION` 头来自**未经认证的 UDP 包**，是攻击者可控输入。以前
+`describeRenderer` 直接 `client.Get(location)`：任何能往多播发包的主机都能让
+服务器去抓内网端点（如云实例元数据 `169.254.169.254`），抓到的内容再以
+`friendlyName` 的形式**回显到发现结果**里。
+
+现在 `rendererHTTPClient` 用自定义 `DialContext`：**拨号时**重新解析并校验每个
+地址，只放行 loopback/私有网段。`isLANAddress` **明确排除 link-local
+（169.254.0.0/16）**——那正是元数据服务所在段，没有渲染器会用它。
+在拨号处校验而不是只校验 URL，是为了防 DNS rebinding。
+
+总时长：以前是每台设备 5s × N 台且不受 discovery ctx 约束（`/discover` 会被拖成
+分钟级，而请求要占着 manager 锁）；现在请求带 ctx，由 discovery timeout 兜底。
+
+### 12.10 小米云：错误脱敏
+
+passport API 的 `desc` 是自由文本，被内插进错误；而驱动错误在
+`server/nativeapi/jukebox.go` 的 `jukeboxDriverError` 里是**原样回给客户端**的。
+新增 `xiaomiCloudClient.scrub`：把 client 自己的 `password`/`passToken`/
+`ssecurity`/`minaServiceToken`/cookie（`userId` 除外，它是标识符不是密钥）
+替换为 `[redacted]`，并把长度截到 200 字符（防上游用超长 `desc` 灌日志）。
+短于 8 字符的"密钥"不参与替换，否则会误伤无关文本。
+
+### 12.11 批量重译：任务代次竞态
+
+`CancelBatchRetranslate` 以前**立刻**把 `Running` 置 false，而 worker 只在
+**两首歌之间**检查取消标志——正在进行的那次 `TranslateSong` 可能还要跑好几秒。
+这期间界面显示"已停止"，用户就能再点一次开始：
+
+- 旧 worker 继续往**新一轮**的计数器里写 `Processed++/Success++`；
+- 更糟的是旧 worker 退出时的 `defer` 会把**新一轮**标记成已完成，
+  于是又能启动第三轮，多个 goroutine 混战。
+
+现在：
+
+- service 加 `batchGen` 代次计数，worker 捕获自己那一代，所有写状态都经
+  `mutate()`，代次不匹配就**丢弃**（不改新一轮的任何字段）。
+- `Cancel` 不再清 `Running`，改设 `Canceling`；`Running=false` 只能由 worker
+  自己收尾时写。前端相应地：canceling 期间把"终止任务"按钮置灰、
+  标题换成"正在停止…"（新增 i18n key `menu.lyricsTranslation.batchStoppingTitle`）。
+- 回归测试在 `core/lyrics/batch_internal_test.go`——**必须是 `package lyrics`**
+  （外部测试包访问不到 `batchMu`/`batchGen`/`batchStatus`）。
+
+### 12.12 本批验证
+
+```bash
+gofmt -l core server conf scripts                    # 无输出
+go vet -tags=netgo,sqlite_fts5 ./core/... ./server/...  # 干净
+make lint                                            # 0 issues
+go test -tags=netgo,sqlite_fts5 ./core/... ./server/... # 37 包全绿
+cd ui && npm run test                                # 94 文件 / 843 用例
+cd ui && npm run lint && npm run check-formatting    # 干净
+python3 scripts/check-i18n-keys.py                    # 519 key，0 缺失
+make test-i18n                                       # exit 0
+ui: npm run build && go build -tags=netgo,sqlite_fts5
+```
+
+spec 数字变化：`core/jukebox` 112 → 125（+13）、`server/nativeapi` 191 → 197（+6）、
+`core/lyrics` 仍 42（那批新增的 `provider_errors_test.go` 和
+`batch_internal_test.go` 是普通 `go test` 风格，不计入 Ginkgo spec 数）。
+
+**未做**：没有推送镜像、没有在真实浏览器里点一遍（`bilingualTrackId` 改的是
+按钮的显示逻辑，建议合并前手动验一次"翻译 A → 切到 B → 按钮不应显示双语"）。
+
+### 12.13 小米批量添加 401（用户报障）
+
+现象：勾选多台音箱 → "已添加 0 台输出设备，2 台失败：小爱同学一代
+({"error":"Not authenticated"})…"。看着像批量功能坏了，实际是**鉴权**。
+
+根因：`XiaomiAuthBlock.handleBatchCreate` 里的两处请求用的是**裸 `fetch`**，
+不带 `X-ND-Authorization` 头（该头由 `dataProvider/httpClient` 注入，见
+`ui/src/dataProvider/httpClient.js`）。`Not authenticated` 来自
+`server/auth.go` 的 401，不是驱动错误——所以逐台都失败，**一台也加不进去**。
+注意其它小米接口（扫码/密码/passToken 登录）都走 `jukebox.js` 的封装，
+所以只有批量这一条路是坏的，很容易误判成后端问题。
+
+修复：在 `ui/src/audioplayer/jukebox.js` 加 `listJukeboxOutputs` /
+`createJukeboxOutput`（都走 `httpClient`），并加 `describeRequestError`
+把 `fetchJson` 的 `{status, body}` 压成一行人能读的原因（之前只能拿到
+`res.text()`）。回归测试 `sends the auth header on batch create instead of
+a bare fetch` 直接 stub 全局 `fetch` 为抛错，确保这条路不会再退回裸 fetch。
+
+### 12.14 去掉「选用此音箱」，统一勾选 + 勾选即预填
+
+原来每台音箱有一个「选用此音箱」按钮，只负责把该设备填进表单。十几个设备的
+账号要点几十次，交互冗余。改为：
+
+- 删除音箱列表与「其他智能设备」列表里的填入按钮（后者删按钮后**必须**补
+  Checkbox，否则那一片设备完全无法选中）。
+- 勾选即调 `prefillFromDevice` 填名称/ID/地址/token/did/model，进入第 2 步时
+  已经是填好的，照常可改。
+- `prefilledDidRef` 记录表单当前来自哪台：取消勾选它时回退到剩余勾选的第一台，
+  避免表单停在一台已被取消勾选的设备信息上。
+- 顺带修 `isUsableDevice`（下面 12.15 详述）。
+
+### 12.15 小米批量：勾选 N 台 → 第 3 步逐台配置（用户第二次报障）
+
+**事故：重构时漏传 `formData` prop，选中类型即崩溃**（用户报"选择小爱音箱后就变成
+『发生错误』"）。
+
+`XiaomiAuthBlock` 用 `formData.account` / `formData.passToken` 给登录框做初值。
+12.15 重构第 2 步时我把它改成 `<XiaomiAuthBlock isCreate onSelectionChange />`，
+忘了带 `formData={values}`。`formData` 变成 `undefined` →
+`formData.account` 抛 `TypeError` → 被 react-admin 的 ErrorBoundary 吞成整页
+"发生错误"，连类型卡片都回不去。
+
+**为什么测试没抓住**：`OutputEditorDialog.test.jsx` 出于隔离需要
+`vi.mock('./XiaomiAuthBlock')` 整个 mock 掉，于是"选中类型 → 真实授权块挂载"
+这条路径**根本没有测试覆盖**。挂载类崩溃只有在真实组件上才暴露。
+
+修复：补回 `formData={values}`。并新增 `OutputEditorDialog.mount.test.jsx`
+——**刻意不 mock** `XiaomiAuthBlock`，专门守挂载路径，覆盖：选中 xiaomi/mpd/dlna
+三种类型都不崩、编辑模式把已有 account/passToken 预填进登录框。
+改 `OutputEditorDialog` 与子组件的 props 契约时，跑这个文件。
+
+教训：**mock 掉子组件的测试文件 ≠ 该子组件被测过**。给子组件加/改 props 时，
+要有一条走真实组件的路径。
+
+用户反馈"只能勾选一个设备"，并要求把单份表单挪到下一步、出现**多份**。
+
+**"只能勾选一个"的根因**：`isUsableDevice` 排除了 `0.0.0.x`（小米云给离线设备
+回的占位地址），而当时账号下正好有一台离线音箱，于是只剩一台可勾。这条规则
+本身没错（存下来必然连不上），但**禁掉勾选框**是错的：用户本来就知道自己音箱在
+局域网里的真实 IP，禁掉等于剥夺了他批量添加的能力。改为**允许勾选**，
+差别只在表单里不预填那个占位地址、标成"需手填"，并由提交校验兜住。
+
+最终形态：
+
+- **第 2 步（连接）**：只有小米授权块（登录 → 勾选设备）+ "已选 N 台：xxx、yyy"
+  摘要。**不再有任何单台表单**。
+- **第 3 步**：为每个勾选设备渲染一张卡片，含 名称 / ID / 地址 / token / did /
+  model，全部预填且可改；账号级字段（account / password / passToken）单独一组，
+  因为它们是整套输出设备共用的。
+- **保存**：逐台 POST `xiaomiDevices`。任何一台失败都不影响其它台，最后汇总提示。
+  中间字段 `xiaomiDevices` 在发请求前被剔除，不会混进单台 payload。
+
+三处必须注意的实现细节：
+
+1. **校验必须分叉**。`validate` 原本无条件要求顶层 `values.name`/`values.address`
+   非空，而批量模式下这两个字段**根本不存在**，导致 `Form` 的 `onSubmit` 永远
+   不触发（表现为"保存按钮能点，但什么都没发生"）。现在 `isBatch` 时改走
+   `validateXiaomiBatch`。逐台校验含：名称非空、地址非空、**地址不是 0.0.0.x**、
+   ID 合法且**互不重复**。
+2. **勾选同步不能覆盖用户编辑**。`onSelectionChange` 只在**勾选集变化**时触发
+   （`selectedDevices` 的 memo 依赖），所以第 3 步里改过的字段不会被回滚。
+   回调引用存进 `ref` 再进 `useEffect`，避免父组件每次渲染都触发一次。
+3. **批量创建逻辑从组件里删干净**。`handleBatchCreate` / `createdDids` /
+   `batchResult` / `onBatchCreated` 全部移除（AGENTS：删代码要连带测试断言一起删），
+   `listJukeboxOutputs` / `createJukeboxOutput` / `describeRequestError` 也随之不再
+   需要——"添加所选 N 台"按钮整体取消，创建职责归向导的第 3 步。
+
+**顺带修的真无障碍 bug**：`Input` 组件展开 `{...input}` 时 react-final-form 只给
+`name` 不给 `id`，MUI 生成的 `<label for>` 与 `<input>` 对不上，**读屏软件读不到
+这些字段**（`getByLabelText` 也找不到）。现在由 `name` 派生 `id`
+（`nd-out-<name>`），本向导所有表单字段一次性修好。

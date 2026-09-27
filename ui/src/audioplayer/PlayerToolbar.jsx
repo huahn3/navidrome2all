@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react'
 import { useDispatch } from 'react-redux'
-import { useGetOne } from 'react-admin'
+import { useGetOne, useTranslate } from 'react-admin'
 import { GlobalHotKeys } from 'react-hotkeys'
 import IconButton from '@material-ui/core/IconButton'
 import { useMediaQuery } from '@material-ui/core'
@@ -94,6 +94,7 @@ const useStyles = makeStyles((theme) => ({
 
 const PlayerToolbar = ({ id, isRadio }) => {
   const dispatch = useDispatch()
+  const translate = useTranslate()
   const { data, loading } = useGetOne('song', id, { enabled: !!id && !isRadio })
   const [toggleLove, toggling] = useToggleLove('song', data)
   const isDesktop = useMediaQuery('(min-width:810px)')
@@ -120,6 +121,7 @@ const PlayerToolbar = ({ id, isRadio }) => {
       disableRipple={!isDesktop}
       onClick={handleSaveQueue}
       disabled={isRadio}
+      aria-label={translate('player.saveQueue', { _: '保存当前播放队列' })}
       data-testid="save-queue-button"
       className={buttonClass}
     >

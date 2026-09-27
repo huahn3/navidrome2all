@@ -258,6 +258,49 @@ var _ = Describe("DeviceManager", func() {
 			Expect(m.Selected()).To(Equal(BrowserOutputID))
 		})
 
+		It("does not rebuild the driver when an unrelated output is added", func() {
+			// 回归：以前 SetStoredOutputs 无条件重建，用户新增一个无关设备就会
+			// 打断正在播放的音乐（小米还要重做握手）。
+			m.SetStoredOutputs(stored)
+			Expect(m.Select("kitchen")).To(Succeed())
+			drv.stopped = false
+			factoryCalls := 0
+			m.factory = func(conf.JukeboxOutputDevice) (PlayerDriver, error) {
+				factoryCalls++
+				return drv, nil
+			}
+
+			// 加一个全新的、与当前选中无关的设备
+			m.SetStoredOutputs(append(append([]conf.JukeboxOutputDevice{}, stored...),
+				conf.JukeboxOutputDevice{ID: "xiaoai", Name: "Speaker", Type: "xiaomi", Address: "192.168.1.99"}))
+			Expect(m.Selected()).To(Equal("kitchen"))
+			Expect(drv.stopped).To(BeFalse(), "无关设备的增删不应打断当前播放")
+			Expect(factoryCalls).To(Equal(0), "配置没变就不该重建驱动")
+		})
+
+		It("keeps the previous output selected when switching to an invalid one fails", func() {
+			// 回归：Select 以前是"先 Stop 旧的、再建新的"，建失败时旧设备已被静音，
+			// 但 selected 仍指向它 —— 对外报告还选中着，实际已停。
+			m.SetStoredOutputs(stored)
+			Expect(m.Select("kitchen")).To(Succeed())
+
+			// 目标设备会让 factory 失败
+			m.SetStoredOutputs(append(append([]conf.JukeboxOutputDevice{}, stored...),
+				conf.JukeboxOutputDevice{ID: "broken", Name: "Broken", Type: "xiaomi", Address: "192.168.1.50", Token: "not-hex"}))
+			m.factory = func(dev conf.JukeboxOutputDevice) (PlayerDriver, error) {
+				if dev.ID == "broken" {
+					return nil, errors.New("boom")
+				}
+				return drv, nil
+			}
+			drv.stopped = false
+
+			Expect(m.Select("broken")).To(MatchError("boom"))
+			// 关键断言：旧设备既没被停，状态也和现实一致
+			Expect(drv.stopped).To(BeFalse(), "切换失败时不应打断正在播放的设备")
+			Expect(m.Selected()).To(Equal("kitchen"))
+		})
+
 		It("exposes Outputs and StoredOutputs", func() {
 			m.SetStoredOutputs(stored)
 			Expect(m.StoredOutputs()).To(Equal(stored))
