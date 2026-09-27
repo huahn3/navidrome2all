@@ -8,7 +8,7 @@ description: 给多输出端播放器（core/jukebox）新增一种输出设备�
 必读前置：仓库根 `AGENTS.md` 第 3–5 节（音量模型、两套 jukebox、已知坑）。
 功能文档 `docs/jukebox.md`；协议调研范例 `docs/xiaomi-speakers.md`。
 
-**新增一个驱动要动 7 个地方，漏一个就会出现"能选不能控"或"某个语言界面缺文案"。**
+**新增一个驱动要动下面 8 个地方，漏一个就会出现"能选不能控"或"某个语言界面缺文案"。**
 
 ## 1. 驱动本体：`core/jukebox/driver_<type>.go`
 
@@ -20,13 +20,22 @@ Pause() error
 Resume() error
 Stop() error
 Seek(seconds int) error            // 不支持就返回 fmt.Errorf("%w: ...", ErrInvalidCommand) → HTTP 400
+                                       // 但"设备没有 seek 动作"不等于"驱动不能实现 seek"：
+                                       // xiaomi 就是用「带 timeOffset 的流地址重播」做的，
+                                       // Subsonic /rest/stream 支持 timeOffset 参数
+                                       // （见 server/subsonic/stream.go）
 SetVolume(volumePercent int) error // 0-100
 GetState() (*PlaybackState, error) // {Status, CurrentTime, Duration, VolumePercent}
 ```
 
 实现时的硬约定：
 
-- **不要自己加互斥锁**：`DeviceManager` 已经把所有命令串行化了。
+- **互斥锁的判断标准不是"已经有全局锁"**：现有三个驱动**都**有自己的 `mu`
+  （`mpdDriver.mu` / `dlnaDriver.mu` / `xiaomiDriver.mu`），且各有正当理由——
+  `Play` 是"clear+add+play"这样的复合序列，拆开会被别的命令插进来；
+  DLNA 的 `Seek` 更是**刻意**先释放 `d.mu` 再起后台 `go verifySeek`，
+  避免在等设备回报时占住 `DeviceManager` 的全局锁。
+  结论：复合命令序列、或"发完就放、稍后校验"的场景**应该**加锁；单条原子命令才不用。
 - 设备不回报进度时：`CurrentTime` 返 0、`Status` 用最后一次已知的缓存值，
   并考虑给"刚下发播放"留一个宽限期（见 `xiaomiPlayGracePeriod`），
   否则音箱缓冲期间会被判成 `stopped` 而错误推进队列。
@@ -54,13 +63,17 @@ GetState() (*PlaybackState, error) // {Status, CurrentTime, Duration, VolumePerc
 - `TYPES` 数组加一项（`id` 必须与后端 `TypeXxx` 完全一致），并给它图标、配色、一句话说明
 - **第 2 步（连接）里新增"仅该类型渲染"的字段块**：`values.type === 'xxx' && (...)`，
   照 xiaomi / mpd 现有写法；别把该类型字段塞进步骤 1 或默认展开
-- 低频字段（token/did/model/账号/路径映射）放**第 3 步（高级）**，它默认折叠
+- 低频字段（token/did/model/账号/路径映射）放**第 3 步（高级）**——
+  它是向导的第 3 个 stepper 步骤，不点「下一步」看不到
 - 每个字段配 `helperText` 文案 key，不要写死英文
 - 卡片列表 `JukeboxOutputs.jsx` 的类型徽标映射也要加一项，否则新类型在列表里认不出来
 - 想让用户"填表之前就知道设备在哪"，照 `discover_mpd.go` 加一个扫描端点，
   再在步骤 2 内嵌扫描按钮（见下面第 8 节的落点）
-- **弹窗容器加 `className="responsive-fields"`**，并按 `AGENTS.md` 第 9 节自检：
-  向导弹窗是窄屏溢出的高发区（Tab 行、chip 行、按钮行都会撑宽）
+- 窄屏溢出按 `AGENTS.md` 第 9 节自检（Tab 行、chip 行、按钮行都会撑宽）。
+  注意：`OutputEditorDialog.jsx` 本身**没有** `className="responsive-fields"`
+  （全仓只有 `ui/src/lyricsTranslation/LyricsTranslation.jsx` 用了它），
+  所以别指望从参考文件照抄这个 class：要防溢出就给新加的行/卡片容器自己设
+  `min-width: 0`，或按需给弹窗根节点补上
 - 如果新类型会"一次发现多台设备"，照 `XiaomiAuthBlock` 的做法给列表加勾选框 +
   批量创建，不要让用户一台一台重复填表
 

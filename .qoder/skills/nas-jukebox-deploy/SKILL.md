@@ -73,7 +73,7 @@ description: 部署与排错本仓库的多输出端播放功能（浏览器 / M
 只读检查，不会改变选中设备或播放状态。`--song` 需要一首存在的歌曲 ID。
 
 ```bash
-bash .qoder/skills/nas-jukebox-deploy/scripts/preflight.sh \
+bash scripts/preflight.sh \
   --base http://192.168.1.10:4533 --user <admin> --password '<pw>' \
   --mpd 127.0.0.1:6600 \
   --dlna http://192.168.1.20:9999/rootDesc.xml \
@@ -85,7 +85,7 @@ bash .qoder/skills/nas-jukebox-deploy/scripts/preflight.sh \
 5 用 Subsonic 签名（`md5(密码+salt)` 的 `u/t/s`）模拟音箱拉流，验证局域网地址 + 端口 +
 签名链路。逐项 FAIL 的成因见 `docs/jukebox.md` 的"故障排查"表。
 
-`--lan-host` 用来单独复现"音箱拿到的主机"（例如想验证换端口后的地址）：
+HTTPS 证书自签时加 `--insecure`。`--lan-host` 用来单独复现"音箱拿到的主机"（例如想验证换端口后的地址）：
 它替换流 URL 的 host，不替换 `--base`。
 
 ## 排错切入点
@@ -126,7 +126,7 @@ bash .qoder/skills/nas-jukebox-deploy/scripts/preflight.sh \
 
 ## Resources
 
-- `scripts/preflight.sh` — 上述 5 段只读自检，输出 OK/FAIL/SKIP，任一 FAIL 时退出码非 0
+- `scripts/preflight.sh` — 上述 5 段只读自检，输出 OK/FAIL/SKIP，任一 FAIL 时退出码非 0（**仓库里唯一一份**，`.claude/` 与 `.qoder/` 下不要再放副本）
 - `docs/jukebox-nas-deployment.md` — 面向用户的分步部署指南（含 compose 与 mpd.conf 全文）
 - `docs/jukebox.md` — 配置项、API、驱动行为、故障排查总表
 - `contrib/jukebox-testing/` — 假 MPD / 假 DLNA，用于不接真设备复现链路

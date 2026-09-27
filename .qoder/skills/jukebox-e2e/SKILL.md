@@ -47,9 +47,11 @@ curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
      -d '{"address":"127.0.0.1:16600","password":""}' \
      http://localhost:4533/api/jukebox/verify/mpd
 
-# 2. 建设备（id 留空 → 服务端按 name 生成）
+# 2. 建设备。id 必须自己带上：服务端不替空 id 生成（留空直接 400），
+#    ID 自动生成只发生在 Web 前端的 suggestId()。
+#    还要满足 ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$（首字符必须是字母或数字）。
 curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
-     -d '{"id":"","name":"E2E MPD","type":"mpd","address":"127.0.0.1:16600"}' \
+     -d '{"id":"e2e-mpd","name":"E2E MPD","type":"mpd","address":"127.0.0.1:16600"}' \
      http://localhost:4533/api/jukebox/outputs
 
 # 3. 凭据脱敏往返：GET 必须返回 ********，回传掩码必须保留原值

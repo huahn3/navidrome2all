@@ -866,7 +866,7 @@ var _ = Describe("GetLyricsBySongId bilingual dedup", func() {
 		}
 		b, err := json.Marshal(trans)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(os.WriteFile(filepath.Join(dir, "1_zh-CN.json"), b, 0o644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(dir, "1_zh-CN.json"), b, 0o600)).To(Succeed())
 	}
 
 	BeforeEach(func() {

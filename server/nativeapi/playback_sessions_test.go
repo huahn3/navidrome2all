@@ -29,9 +29,11 @@ var _ = Describe("Playback Sessions Endpoints", func() {
 			Libraries: []model.Library{{ID: 1, Name: "L1"}}}
 		ds = &tests.MockDataStore{MockedMediaFile: tests.CreateMockMediaFileRepo()}
 		api = &Router{ds: ds}
-		// takeover 现在会过 jukeboxGuard（它会 pause 远程输出），测试里要打开
+		// 刻意保持 Jukebox.Enabled 的**默认值 false**：接管端点不应该被它挡住。
+		// 曾经在这里打开过它（因为 takeover 走 jukeboxGuard），那等于把"只做本机
+		// 播放"的部署也挡在门外——正是这个 bug 让下面那条用例形同虚设。
 		origJukeboxEnabled = conf.Server.Jukebox.Enabled
-		conf.Server.Jukebox.Enabled = true
+		conf.Server.Jukebox.Enabled = false
 		// tracker 是单例且捕获了创建时的 DataStore，换了 mock store 必须重建
 		scrobbler.ResetInstance()
 	})
@@ -77,6 +79,23 @@ var _ = Describe("Playback Sessions Endpoints", func() {
 			OutputDevice:   "browser",
 		})).To(Succeed())
 	}
+
+	// 回归：takeover 曾被端点级 jukeboxGuard 挡住，而 Jukebox.Enabled 默认 false，
+	// 于是"只用本机播放"的部署根本接管不了（403 jukebox is disabled）。
+	It("works even when Jukebox.Enabled is false (the default)", func() {
+		Expect(conf.Server.Jukebox.Enabled).To(BeFalse(), "本用例以默认关闭为前提")
+		seedSession("test-client-1", "u1")
+
+		body := []byte(`{"action":"pause"}`)
+		req := httptest.NewRequest(http.MethodPost,
+			"/playback/sessions/test-client-1/takeover", bytes.NewReader(body))
+		req = req.WithContext(request.WithUser(req.Context(), user))
+		rec := httptest.NewRecorder()
+		api.takeoverPlaybackSession(rec, req)
+
+		Expect(rec.Code).To(Equal(http.StatusOK),
+			"Jukebox.Enabled=false 时接管必须照常工作：%s", rec.Body.String())
+	})
 
 	It("POST /api/playback/sessions/{id}/takeover handles takeover gracefully with pause and broadcast fields", func() {
 		seedSession("test-client-1", "u1")

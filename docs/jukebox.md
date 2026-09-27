@@ -56,7 +56,7 @@ Type = "xiaomi"
 Address = "192.168.1.30"                      # 音箱 IP（本地 miIO，UDP 54321）
 Token = "00112233445566778899aabbccddeeff"    # 32 位 hex 设备 token（本地控制/音量/状态）
 DID = "123456789"                             # 数字设备 ID（有 token 时可省略，握手自动学习）
-Model = "l7a"                                 # 型号后缀，选择 siid/aiid 映射（l7a/s12/l05b，缺省按 Play 系列默认）
+Model = "l7a"                                 # 型号后缀：l7a / l07a / l05b（也接受 xiaomi.wifispeaker.* 全名），缺省按 Play 系列默认
 Account = "user@example.com"                  # 可选：小米账号（+ Password）启用云端文本指令播放
 # TextDirective = "5-5"                       # 可选：execute-text-directive 的 siid-aiid 覆盖
 ```
@@ -95,16 +95,19 @@ MPD 是"让 NAS 本机声卡出声"最省事的方案：Navidrome 只告诉 MPD 
 
 新建输出的第 2 步里点「扫描局域网」，后端会 `GET /api/jukebox/discover/mpd`：
 扫**本机所在私网 `/24`** 的 6600 端口（最多 32 个并发、每地址 400ms、最长约 4s），
-对每个应答者读一次 `password` 字段，直接告诉你三件事：MPD 版本、**要不要密码**、
-密码写在 `mpd.conf` 的哪一行。扫到的东西点一下就填进地址框。
+对每个应答者读一次 `password` 字段，告诉你两件事：MPD 版本、**要不要密码**。
+扫到的东西点一下就填进地址框。
 
 ```json
-[{"address":"192.168.31.88:6600","version":"0.21.11","needsPassword":true,
-  "passwordLine":"password \"secret@read,add,control\" @"}]
+[{"address":"192.168.31.88:6600","host":"192.168.31.88","port":6600,
+  "version":"0.21.11","needsPassword":true}]
 ```
 
-- `needsPassword=true` 时密码框旁会提示"密码是 mpd.conf 里 password 那一行
-  `@` 前面的部分"——`@` 后面是权限列表，**不要一起填进去**。
+- `needsPassword=true` 表示"匿名登录被拒、`mpd.conf` 里配了密码"。**服务端不会把
+  密码那一行回给你**（响应里没有这样的字段），要去 MPD 主机上自己读
+  `password` 行里 **`@` 前面的部分**——`@` 后面是权限列表，**不要一起填进去**。
+  权限至少要 `read,add,control`：缺 `add` 会连用户名一起报错，缺 `control` 会让
+  pause/seek/音量全部失败。
 - 填完地址点「测试连接」走 `POST /api/jukebox/verify/mpd`，会当场校验密码对不对，
   不对就明确报错，省得存完设备选不中才发现。
 - 扫不到很正常：MPD 默认只监听回环（见 ③），或不在同一个 `/24`。
@@ -213,8 +216,18 @@ Path to   = "无损/FLAC/"
 
 - 只能播本地文件：网络电台等"只有流地址、没有媒体路径"的条目会失败，
   错误为 `mpd: no local media path for output "..."`
-- 切走设备时发 `stop`（清掉当前播放），重新选中后需再点播放
+- 切走设备时发 `stop`（MPD 语义是暂停，不是 `clear`；`clear` 只在 `Play` 里用），
+  重新选中后需再点播放
 - 进度/状态来自 MPD 的 `status`（`elapsed`/`duration`），精度足够
+- **有超时保护**（重要）：gompd 库走的是无超时的 `textproto.Dial`，且不暴露底层连接，
+  没法设 deadline。所以驱动做了两层兜底——
+  1. 先自己 `net.DialTimeout` 探一次可达性，5 秒（`mpdConnectTimeout`）不可达就快速失败；
+  2. 整个拨号+握手放进 goroutine，8 秒（`mpdHandshakeTimeout`）定时器兜底。
+
+  没有这两层时，一个"连得上但不回数据"的黑洞地址就能挂死整个 `/api/jukebox/*`
+  （`DeviceManager` 的所有命令持同一把全局锁）。对应错误串：
+  `mpd: cannot reach <addr>: ...` 与 `mpd: connect <addr> timed out after 8s`。
+  兜底 goroutine 仍会阻塞在读 greeting 上，但它**不持锁**，不影响其它请求。
 
 **⑨ 不接真实 MPD 先验证连通性**
 
@@ -237,8 +250,10 @@ python3 contrib/jukebox-testing/fake_mpd.py     # 监听 127.0.0.1:16600
   `http://192.168.31.142:9999/e522dfd8-....xml`。驱动会下载文档、解析出
   AVTransport 的 `controlURL` 并补全路径。
 - 也可以只填 `host:port`：驱动依次探测 `/rootDesc.xml`、`/description.xml`、
-  `/<UDN>.xml`，全部失败才回退到约定的 `/AVTransport/control`（会记 warning）。
-- **必须配置 `BaseUrl`**（见[上文](#让局域网设备能拉到流baseurl)）。音箱拉的是
+  `/desc.xml`，全部失败才回退到约定的 `/AVTransport/control`（会记 warning）。
+  > 用 `/<UDN>.xml` 这类自定义路径的设备**不会被自动探测到**（扫描结果里给出的
+  > 就是那个 URL，直接粘贴即可）。
+- **必须配置 `BaseUrl`（或 `BaseHost`/`BaseScheme`）**（见[上文](#让局域网设备能拉到流baseurl)）。音箱拉的是
   带 Subsonic 签名的 `/rest/stream` 绝对地址，主机名不对就是"选中了但没声音"。
 - 扫描原理：SSDP `M-SEARCH`，`MAN: "ssdp:discover"`，同时探测
   `AVTransport:1` 服务与 `MediaRenderer:1` 设备，按 `Location` 去重。
@@ -253,20 +268,38 @@ python3 contrib/jukebox-testing/fake_mpd.py     # 监听 127.0.0.1:16600
 协议细节与 siid/aiid 差异见 [小米音箱原生协议调研](xiaomi-speakers.md)。
 
 - **Address** = 音箱 IP（不带端口，本地控制走 UDP 54321）
-- 凭据三选一/组合（缺项时驱动构造期直接报错）：
-  - `Token`（32 位 hex）→ 本地 miIO 控制：**播放/暂停/音量/状态**都有，推荐至少配它。
-    报错原文：`xiaomi driver requires token (local miIO) and/or account+password (cloud MIoT)`
-  - `Account` + `Password` → 小米云 MIoT：作为播放（文本指令）的优先通道
+- 凭据组合（缺项时驱动构造期直接报错）：
+  - `Token`（32 位 hex）→ **本地 miIO（UDP 54321）**：播放/暂停/状态在本地完成。
+    配了它就能完全脱离小米云。
+  - `PassToken`（小米 passport 的会话令牌）→ **云端登录免密**，**优先于**
+    `Account` + `Password`。要用云端的 Mina 通道（见下）**必须有它**。
+  - `Account` + `Password` → 小米云 passport 登录，登录过程中会顺带取到 passToken
+    再进 Mina 通道。等价于"两步换一步"，能用但多一次登录。
+  - 构造期报错原文：
+    `xiaomi driver requires token (local miIO) and/or account+password/passToken (cloud MIoT)`
   - 只用云端（没有 Token）时 **`DID` 必填**：
     `xiaomi driver: cloud-only setups require the did (device ID)`；
     有 Token 时可留空，握手会自动学到
-  - 音量必须有 Token：`xiaomi driver: volume control requires the local miIO transport (token)`
-- **Model**：`l7a` / `s12` / `l05b`，选择 siid/piid/aiid 映射与音量下限（L7A 是 3）；
-  未知型号用 Play 系列默认表，播放指令不同时可填 `TextDirective = "5-5"` 覆盖
-- 工作方式：播放是把 `播放 <流地址>` 作为文本指令下发，音箱自己去拉流，
-  所以同样依赖 `BaseUrl`；小爱要求 URL 带扩展名，故走 `/rest/stream/{id}.mp3` 别名端点
-- 限制：**不支持 seek**（返回 400，前端不会转发用户拖动）、`Stop` 以 Pause 近似、
-  无进度回报（`currentTime` 恒 0，前端因此跳过漂移校准）
+- **两条云端通道**（`Account`/`PassToken` 配了才有）：
+  - **Mina / Ubus**（`api2.mina.mi.com`，`playerMinaURL` / `playerMinaOperation` /
+    `playerMinaSetVolume` / `getMinaStatus`）——**首选**。Play/Pause/Stop/SetVolume/
+    GetState 都走它，失败才回退。
+  - **文本指令**（`播放 <流地址>`）——回退路径。
+  两者的播放都要音箱自己去拉流，所以同样依赖 `BaseUrl`；小爱要求 URL 带扩展名，
+  故走 `/rest/stream/{id}.mp3` 别名端点。
+- **Model**：识别 `l7a` / `l07a` / `l05b`（也接受完整 `xiaomi.wifispeaker.*` 形式），
+  选择 siid/piid/aiid 映射与音量下限（L7A 是 3）。
+  > **`s12` 不是有效键**，填了会静默落到 Play 系列默认表。
+  播放指令不同时可填 `TextDirective = "5-5"` 覆盖。
+- 限制：
+  - **seek 驱动层是支持的**：`Seek(position)` 用「带 `timeOffset=N` 的流地址重播」
+    实现（`timeOffset` 是 Subsonic `/rest/stream` 的真实参数）。只有**还没播过任何
+    东西**时返回 400（`cannot seek before playing a track`）。
+    **但网页 UI 仍不发 seek**——`Player.jsx` 用 `!remoteNoProgressRef` 拦掉了
+    （依据是 `deviceType === 'xiaomi'`，因为它不回报进度）。第三方 API 客户端可以直接用。
+  - 无进度回报：`currentTime` 恒 0，前端因此跳过漂移校准、也不能显示真实进度。
+  - **Token 与账号同配时，本地 miIO 的音量通道会被跳过**（只走云端）——
+    见 `driver_xiaomi.go` 里 `d.miio != nil && d.cloud == nil` 这个条件。
 - 验证状态：上述凭据校验、siid/aiid 映射与错误分支都由单测覆盖（假 miIO UDP 服务器 +
   httptest 假小米云）；**真机上的本地 miIO 控制仍未实测**（手头的音箱走的是 DLNA 接口）。
   第一次配真机时，用 `Address = 音箱IP` + `Token`，从"只点播放"开始逐步验；
@@ -279,10 +312,10 @@ python3 contrib/jukebox-testing/fake_mpd.py     # 监听 127.0.0.1:16600
 | Address | — | `host:6600` | 描述文档 URL（推荐）或 `host:port` | 音箱 IP |
 | Password | — | MPD 密码（可选） | — | 小米账号密码（配 Account） |
 | Path from / to | — | 一般留空 | — | — |
-| Token / DID / Model / Account / TextDirective | — | — | — | 小米专用 |
+| Token / DID / Model / Account / Password / PassToken / TextDirective | — | — | — | 小米专用 |
 | 需要 `BaseUrl` | 否 | 否 | 是 | 是 |
 | 播放内容 | 本地解码 | MPD 本地文件 | 音箱拉 HTTP 流 | 音箱拉 HTTP 流 |
-| 支持进度/seek | 是 | 是 / 是 | 看设备 | 否 / 否 |
+| 支持进度/seek | 是 | 是 / 是 | 看设备（Seek 是异步校验+重发） | 进度 否 / seek **驱动支持**（重播+timeOffset），但前端不发 |
 
 ## 架构
 
@@ -393,11 +426,11 @@ BaseUrl = "http://192.168.31.246:14533"
 | GET | `/devices` | 登录用户 | `{devices:[{id,name,type}], selected}`；`browser` 为内置输出 |
 | GET | `/status` | 登录用户 | `{status,currentTime,duration,volume,deviceId,deviceType}`；浏览器输出时返回 `stopped`；`deviceType` 供前端按设备能力调整行为（如 xiaomi 无进度回报） |
 | POST | `/select` | 管理员* | `{device_id}`；切回 `browser` 会停止远程设备 |
-| POST | `/play` | 管理员* | `{song_id?, stream_url?, position?}`；position>0 时播放后 seek，并校验设备是否真的跳转（见"故障排查"） |
+| POST | `/play` | 管理员* | `{song_id?, stream_url?, position?}`；position>0 时播放后 seek。seek 的**校验与重发是异步的**（`go verifySeek`），响应不等设备确认——这样才不会占住 `DeviceManager` 的全局锁 |
 | POST | `/control` | 管理员* | `{action, value}`；action ∈ `pause/resume/stop/seek/volume` |
 | GET | `/discover?timeout=N` | **管理员** | SSDP 扫描结果 `[{usn,name,address,model}]`；`address` 可直接粘进输出的 `Address` |
-| GET | `/discover/mpd?port=N&timeout=S` | **管理员** | 扫本机所在私网 `/24` 的 MPD，返回 `[{address,version,needsPassword,passwordLine}]`；`port` 默认 6600、`timeout` 默认 4（秒，上限见代码） |
-| POST | `/verify/mpd` | **管理员** | `{"address":"host:port","password":"..."}` → `{"ok":true,"version":"0.21.11","authenticated":true}`；地址不可达/不是 MPD/密码错会分别给出明确错误 |
+| GET | `/discover/mpd?port=N&timeout=S` | **管理员** | 扫本机所在私网 `/24` 的 MPD，返回 `[{address,host,port,version,needsPassword}]`；`port` 默认 6600、`timeout` 默认 4 秒（越界会被静默夹回 4s） |
+| POST | `/verify/mpd` | **管理员** | `{"address":"host:port","password":"..."}` → 成功 `{"status":"ok","address":"host:port"}`，失败 502 + 驱动错误原文（没有 `version`/`authenticated` 字段） |
 | GET | `/outputs` | **管理员** | 网页上创建的输出列表（含 TOML 条目时以 DB 覆盖同 ID） |
 | POST | `/outputs` | **管理员** | 新建输出；`id` 必须 1-64 位 `[a-zA-Z0-9_-]` |
 | GET/PUT/DELETE | `/outputs/{id}` | **管理员** | 读 / 改 / 删单个输出 |
@@ -407,7 +440,7 @@ BaseUrl = "http://192.168.31.246:14533"
 `/outputs` 与 `/discover*`、`/verify/*` **始终是管理员**（不受 `AdminOnly` 影响）：输出配置里
 存着设备 token 与账号密码。
 
-`/outputs` 的**密码类字段是脱敏往返**：`GET` 时 `password`/`token`/账号口令会变成
+`/outputs` 的**密码类字段是脱敏往返**：`GET` 时 `password`/`token`/`passToken`/账号口令会变成
 `SECRET_MASK`（`********`），`PUT` 提交 `SECRET_MASK` 表示"沿用库里原值"，
 而不是把字面量 `********` 存进去。所以前端必须能区分"用户没改"和"用户填了新密码"。
 
@@ -425,7 +458,8 @@ BaseUrl = "http://192.168.31.246:14533"
   定期用 `/status` 校准漂移；音量三条同步规则（见[音量模型](#音量模型)）；
   `playerReducer` 新增 `outputDevice` 状态
   - 切换输出与首次向设备下发歌曲时都带上本地时钟的 `position`，避免从 0 重播
-  - `deviceType === 'xiaomi'` 时跳过漂移校准与用户 seek 转发（设备不支持）
+  - `deviceType === 'xiaomi'` 时跳过漂移校准与用户 seek 转发
+    （**理由是它不回报进度**，不是驱动不支持 seek）
 - `ui/src/jukebox/`：「管理 → 输出设备」控制台，路由 `/jukebox-outputs`
   （不再是 react-admin 的 list/create/edit 页，也没有 show 页）
   - `JukeboxOutputs.jsx`：卡片列表 + header「新增输出设备」按钮（移动端是右下角 FAB），
@@ -447,11 +481,11 @@ BaseUrl = "http://192.168.31.246:14533"
 
 ## 测试
 
-- Go（Ginkgo）：`make test PKG=./core/jukebox`（112 specs，含 xiaomi 驱动的假 miio
+- Go（Ginkgo）：`make test PKG=./core/jukebox`（125 specs，含 xiaomi 驱动的假 miio
   UDP 服务器与 httptest 假小米云、假 DLNA 渲染器与 SSDP 回放、MPD 扫描与密码探测）、
-  `make test PKG=./server/nativeapi`（191 specs，含输出 CRUD 的鉴权、ID 校验与凭据掩码保留）、
+  `make test PKG=./server/nativeapi`（198 specs，含输出 CRUD 的鉴权、ID 校验与凭据掩码保留）、
   `server/subsonic` 含 `StreamAlias`（`/rest/stream/{id}.mp3`）用例
-- 前端（Vitest）：`cd ui && npm run test`（92 文件 / 804 用例，含 `DeviceSelector.test.jsx`、
+- 前端（Vitest）：`cd ui && npm run test`（94 文件 / 843 用例，含 `DeviceSelector.test.jsx`、
   `VolumeControl.test.jsx`、`PlayerToolbar.test.jsx`、`playerReducer.test.js`、
   `volume.test.js`）
 - 端到端：`contrib/jukebox-testing/` 提供假 MPD / 假 DLNA 服务器，
@@ -476,6 +510,8 @@ BaseUrl = "http://192.168.31.246:14533"
 | 选 MPD 后 502，body 是 `mpd: no local media path for output ...` | 该条目只有流地址没有本地文件（网络电台） | MPD 输出播不了电台，改用 DLNA/浏览器 |
 | MPD 命令都成功但没声音 | `add` 的路径与 MPD 曲库不符，或 `audio_output` 指向了别的声卡 | 用假 MPD 看 `add "..."` 的确切相对路径（见教程 ⑨），再核对 MPD 侧目录 |
 | MPD 报认证/权限失败 | `Password` 与 `mpd.conf` 的 `password = "...@read,add,control"` 不匹配 | 密码留空即匿名连接；权限需含 `add,control` |
+| MPD 报 `mpd: cannot reach <ip>: ... i/o timeout` | 音箱/主机不可达，或被防火墙丢包 | 5 秒内连不上就是真连不上；确认地址与端口、防火墙放行 |
+| MPD 报 `mpd: connect <ip> timed out after 8s` | TCP 连上了但 MPD 不回 greeting | 多半是地址不是 MPD（或有中间设备劫持了 6600）。换端口或改直连 |
 | 音量刷新后变成 0%（或切设备后一直是 0%） | 驱动在设备首次回答音量查询前回报 0，被界面采纳并持久化 | 已由"忽略设备回报 0 + 读取持久化时把 0 换成默认值"修复；若复现，先查 `/api/jukebox/status` 的 `volume` 与 localStorage 的 `state.player.volume` |
 | 拖滑块后设备音量不动 | 当前是浏览器输出（`AdminOnly` 下非管理员被 403），或 `/control volume` 失败 | 看同时间戳的驱动错误（502 body 是设备原文）；确认选中设备与登录用户权限 |
 | 键盘 `Vol+/Vol-` 没反应 | 快捷键绕过了 store 直接写 `<audio>`，被"音量权威"effect 夺回 | 现状已修正为走 `setVolume`；二次开发时不要改回直接赋值（见[音量模型](#音量模型)） |
@@ -486,18 +522,29 @@ BaseUrl = "http://192.168.31.246:14533"
 - DLNA 渲染器的 seek/进度依赖 `GetPositionInfo`，部分设备回报不准（实测小爱 S12
   的 `RelTime` 会滞后若干秒）；小米音箱一次拉走整个文件而不是边下边播
 - 渲染器可能接受 `Seek` 却忽略它（见上表）。驱动以"回报位置是否到达目标"为准
-  判断是否重发，最多 `dlnaSeekAttempts` 次，之后记 warning 并保持设备自身位置
+  判断是否重发（`dlnaSeekAttempts = 3`：同步发 1 次 + 异步重发 2 次 = **共 3 次**），
+  之后记 warning 并保持设备自身位置。相关时序常量：
+  `dlnaSeekStartTimeout=6s`、`dlnaSeekConfirmDelay=1200ms`、`dlnaSeekPollInterval=500ms`、
+  `dlnaSeekTolerance=5` 秒
 - SSDP 扫描用标准 `MAN: "ssdp:discover"` 同时探测 `AVTransport:1` 服务与
   `MediaRenderer:1` 设备类型，按 `Location` 去重（同一台设备会回多条）。
   不响应 M-SEARCH 的设备需要手工填 `Address`：用抓 `NOTIFY` 包或路由器
   设备列表里的 `http://<ip>:<port>/<UDN>.xml`
 - DLNA 描述文档路径没有统一约定（`/rootDesc.xml`、`/description.xml`、
-  `/<UDN>.xml` 都有设备在用）。`Address` 只填 host:port 时驱动会依次探测前三个，
-  全部失败才回退到约定的 `/AVTransport/control` 并记录 warning
+  `/<UDN>.xml` 都有设备在用）。`Address` 只填 host:port 时驱动依次探测
+  `/rootDesc.xml` → `/description.xml` → `/desc.xml`（见 `descriptionPaths`），
+  全部失败才回退到约定的 `/AVTransport/control` 并记录 warning。
+  另注意：把描述文档 URL 填进 `Address` 时，`isControlURL` 是**按路径里是否含
+  `AVTransport` / `renderingcontrol`、或是否以 `/control` 结尾**来判断它是控制地址的，
+  所以 `http://ip/AVTransport.xml` 这种**描述文档**会被误当成控制地址直接 POST
+  上去，表现为 HTTP 501。遇到这种设备要填它真正的控制 URL
 - MPD 输出走"本地文件"，所以 MPD 的 `music_directory` 必须与 Navidrome 的
   `MusicFolder` 指向同一份内容，且歌曲要被 MPD 收录（`mpc update` / `auto_update`）；
   `PathFrom`/`PathTo` 只能做相对路径的字符串替换，不能替代上面两步
-- xiaomi 驱动（`driver_xiaomi.go`）：不支持 seek（返回 `ErrInvalidCommand` → 400）；
-  `Stop` 以 Pause 近似；无进度回报（`currentTime` 恒 0，音箱播完自动停止时前端按
-  `stopped` 推进队列）；音量需本地 token；播放走云端或本地文本指令（`播放 <url>`）。
+- xiaomi 驱动（`driver_xiaomi.go`）：**无进度回报**（`currentTime` 恒 0，音箱播完
+  自动停止时前端按 `stopped` 推进队列），这也是前端不发 seek 的原因；
+  但驱动**支持** seek——用「带 `timeOffset` 重播」实现，只有未播过任何东西时才
+  返回 `ErrInvalidCommand`（400）。云端控制优先走 Mina/Ubus 通道
+  （`playerMinaURL` / `playerMinaOperation` / `playerMinaSetVolume`），失败才回退
+  文本指令 `播放 <url>`；`Stop` 在 Mina 下是真 stop，回退路径才用 Pause 近似。
   型号差异与协议细节见 [小米音箱原生协议调研](xiaomi-speakers.md)

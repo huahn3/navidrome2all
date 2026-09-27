@@ -20,6 +20,26 @@ DOC_FILES.append(os.path.join(ROOT, "AGENTS.md"))
 
 problems = []
 
+# 来自第三方库的方法名，本仓源码里自然搜不到
+EXTERNAL_SYMS = {"extend", "get", "map", "set", "has", "isEmpty", "values", "keys"}
+
+# 见 docs/fork-and-upstream.md（说"已删除"）与 docs/risk-notes-optimization.md
+# 的历史改动清单（记录当时的文件名，现已重命名/重构）。
+HISTORICAL = {
+    ".github/dependabot.yml",
+    ".github/workflows/",
+    "ui/src/jukebox/JukeboxOutputForm.jsx",
+    "JukeboxOutputList/Create/Edit/Form.jsx",
+    "jukebox/index.js",
+    "subsonic/index.js",
+    "node-polyglot/index.js",
+    "node_modules/react-final-form/dist/react-final-form.cjs.js",
+    "material-ui/core/Popover/Popover.js",
+    "src/layout/NowPlayingPanel.test.jsx",
+    "github.com/icepie/miio.go",
+    "icepie/miio.go",
+}
+
 
 def rel(p):
     return os.path.relpath(p, ROOT)
@@ -55,6 +75,10 @@ for doc in DOC_FILES:
             continue
         # 明显是散文/示例的（带占位符、大写开头、非本仓库前缀）
         if any(t in path for t in ("...", "<", ">", "|")):
+            continue
+        # 已删除/已重命名的文件只在"历史叙述"与"历史改动清单"里出现，
+        # 那是当时的事实，不该改写成现在的名字（那会篡改历史）。
+        if path in HISTORICAL:
             continue
         if not os.path.exists(os.path.join(ROOT, path)):
             problems.append(("PATH", rel(doc), path, "文件不存在"))
@@ -108,6 +132,9 @@ for doc in DOC_FILES:
             continue
         if re.search(r"\b" + re.escape(sym) + r"\b", all_js):
             continue
+        # 外部库的方法（lodash 之类）不在本仓源码里
+        if sym in EXTERNAL_SYMS:
+            continue
         problems.append(("SYM", rel(doc), f"{sym}()", "Go 和 ui/src 里都找不到这个符号"))
 
 # ----------------------------------------------------- 3. 配置项 [Jukebox] 字段
@@ -147,9 +174,9 @@ for doc in DOC_FILES:
         line_start = text.rfind("\n", 0, m.start()) + 1
         line_end = text.find("\n", m.end())
         line = text[line_start:line_end if line_end > 0 else len(text)]
-        pk = re.search(r"(PKG=\./[\w/]+|make test PKG=\./[\w/]+|\./(?:core|server)/\w+)", line)
+        pk = re.search(r"(?:PKG=)?(\./(?:core|server)/[\w/]+)", line)
         if pk:
-            doc_claims.setdefault(pk.group(1).replace("PKG=", ""), set()).add((int(m.group(1)), rel(doc)))
+            doc_claims.setdefault(pk.group(1), set()).add((int(m.group(1)), rel(doc)))
 
 print("=" * 70)
 print("1) 路径/行号检查完成")

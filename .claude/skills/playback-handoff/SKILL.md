@@ -20,6 +20,7 @@ description: Navidrome 活跃会话追踪与跨端无缝流转接管（Playback 
         |
         +-- 点击接管 (Takeover) 
              |-- 1. 继承 6 大状态 (outputDevice, volume, positionMs, state, playMode, bilingual)
+             |      注意：SSE 负载里**没有** bilingual，被接管方要继承得回查会话列表
              |-- 2. POST /api/playback/sessions/{sessionId}/takeover
                      |-- PlayTracker 标记目标为 paused/stopped
                      |-- SSE 广播 playbackHandoff -> 客户端 A 即时静音暂停
@@ -58,7 +59,7 @@ ui/src/
 | **2. 音量大小** | `volume` | `integer` | `0 ~ 100` 整数百分比。Redux store 需将其换算为 `0.0 ~ 1.0`（除以 100）。若为 0 必须兜底为 `defaultUIVolume/100` 严禁持久化 0 |
 | **3. 播放进度** | `positionMs` | `integer` | 毫秒级精度。服务端根据上次心跳时间戳与 `playbackRate` 进行线性插值（`clampedMs`），接管端通过 `pendingSeekTime` 瞬间定位 |
 | **4. 播放状态** | `state` | `string` | `"playing"`、`"paused"`。若原设备是暂停状态，用户点击会话卡片应**保持暂停**；仅当用户主动点击卡片右侧的 `▶` 按钮时强制设为 `playing` |
-| **5. 循环模式** | `playMode` | `string` | `"single"`（单曲循环）、`"all"`（列表循环）、`"order"`（顺序播放）。接管端同步设置播放器内核的 `mode` |
+| **5. 循环模式** | `playMode` | `string` | **内核枚举的 4 个值**：`"order"`、`"orderLoop"`、`"singleLoop"`、`"shufflePlay"`。接管端直接写进播放器内核的 `mode`，发错值不生效 |
 | **6. 双语歌词** | `bilingual` | `boolean` | 是否开启歌词翻译。若为 `true`，接管端自动激活双语模式并异步拉取翻译结果（命中服务端磁盘缓存 0ms 渲染） |
 
 ---
@@ -80,7 +81,30 @@ ui/src/
 
 ## 4. Jukebox 发声通道防冲突协议
 
-在 `POST /api/playback/sessions/{sessionId}/takeover` 接口中：
+### 4.0 归属校验（安全硬规则，最容易漏）
+
+takeover 是**写**操作（会 pause/stop 对方的播放、改写对方上报的状态），
+所以必须校验会话归属——`canTakeOverSession`（`playback_sessions.go`）：
+
+```go
+caller.IsAdmin || target.UserId == caller.ID
+```
+
+- 普通用户接管**别人**的会话 → **403** `not allowed to take over another user's session`
+- 管理员可接管任何人的会话（共享音箱场景需要）
+- 状态码顺序：**404 先于 403**。目标会话不存在、已停止、或当前用户对它所属的
+  媒体库无访问权，都返回同样的 404 `session not found or already stopped`
+- 回归测试：`playback_sessions_test.go` 的 `canTakeOverSession enforces ownership`
+
+### 4.1 门禁下沉：端点不受 Jukebox.Enabled 阻挡
+
+`Jukebox.Enabled` 默认 **false**。它**不能**当 takeover 的端点级门禁——
+那会让"只用本机播放"的部署彻底没法接管。真正用到 Jukebox 的只有下面场景 1 的
+"暂停远程音箱"一步，门禁放在那里（`pauseRemoteOutputIfNeeded`）：
+`Enabled=false` 或 `AdminOnly=true` 且非管理员时**跳过该步**，接管本身照常成功。
+回归测试：`works even when Jukebox.Enabled is false (the default)`。
+
+### 4.2 两个场景
 - **场景 1：接管端选择“本机发声” (`targetOutput = "browser" / "local"`)**：
   若此时原会话或服务器正通过 Jukebox 外部音箱播放，服务端自动向 Jukebox 下发 `pause`，确保声音平滑转移到当前设备的耳机/扬声器，**杜绝两端同时发声**。
 - **场景 2：接管端选择继续在外部音箱播放（`targetOutput = targetSession.outputDevice`）**：

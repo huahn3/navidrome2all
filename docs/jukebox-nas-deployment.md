@@ -260,7 +260,7 @@ aplay -l                        # 确认设备号与 mpd.conf 的 device 一致
 仓库自带一个只读自检脚本（不会改变选中设备或播放状态），从 NAS 上或任意同网段机器跑：
 
 ```bash
-bash .qoder/skills/nas-jukebox-deploy/scripts/preflight.sh \
+bash scripts/preflight.sh \
   --base http://<NAS_IP>:4533 --user <管理员> --password '<密码>' \
   --mpd 127.0.0.1:6600 \
   --dlna http://<音箱IP>:<port>/<UDN>.xml \

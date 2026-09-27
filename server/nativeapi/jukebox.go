@@ -217,7 +217,8 @@ func jukeboxDriverError(w http.ResponseWriter, err error) {
 //
 // The host comes from core/publicurl, not from the request: a browser talking to
 // "localhost" must not hand that address to a speaker on the LAN. Set ND_BASEURL
-// (or ND_SHAREURL) to the address renderers can reach.
+// (ND_BASEHOST/ND_BASESCHEME). Note ND_SHAREURL does NOT apply here: that is only
+// read by publicurl.PublicURL, while this path uses AbsoluteURL.
 func jukeboxStreamURL(r *http.Request, username, password, songID string) string {
 	saltBytes := make([]byte, 8)
 	_, _ = rand.Read(saltBytes)

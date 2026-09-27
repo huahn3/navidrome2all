@@ -26,7 +26,7 @@ Navidrome 在播放侧内置了**按需歌词翻译**能力。翻译只在用户
 所有 `/api/` 路由使用 Native API 鉴权头：
 
 ```
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 ```
 
 `<token>` 来自 `POST /auth/login` 的 JSON 响应中的 `token` 字段。  
@@ -41,7 +41,7 @@ Authorization: Bearer <token>
 ```
 POST /api/lyrics/translate
 Content-Type: application/json
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 ```
 
 **请求体**
@@ -89,6 +89,15 @@ Authorization: Bearer <token>
 | `inlineLrc` | **单行悬浮双语歌词（推荐）**：同时间戳合并原文与译文（`原文 / 译文`），专为底栏悬浮及单行播放器设计，彻底避免同时间戳双行歌词竞争闪烁 |
 | `bilingualLrc` | 双语 LRC：每行原文后紧跟同时间戳的译文行，适合支持同时间戳双行的全屏滚动歌词器 |
 | `combinedLrc` | 组合 LRC：原文行带时间戳，译文行紧跟其后无时间戳 |
+| `lines` | 结构化数组（毫秒精度），每项 `{index, start, end, original, translation}` |
+
+> **译文与原文相同时只输出一遍原文**（比较前会 `TrimSpace`，所以仅有空白差异也
+> 算相同；译文为空同样如此）。上面示例里如果 `translation` 等于 `original`，
+> 三种 LRC 都会只出现一行原文，**不会**出现 `[00:12.34]xxx\n[00:12.34]xxx`。
+> 这是修过的 bug：引擎对专有名词、纯外文歌词、人名常原样返回。
+>
+> 注意 **`lines[]` 不做这个去重**——`translation` 仍保留引擎原样返回的重复原文。
+> LRC 与 `lines` 在这一点上行为不对称，用结构化数据渲染时要自己去重。
 | `lines` | 结构化数组，含 `start/end`（毫秒）、`original`、`translation`，适合自定义 UI 渲染 |
 
 **错误响应**
@@ -98,7 +107,7 @@ Authorization: Bearer <token>
 | 403 | 翻译功能未启用（管理员未开启） |
 | 404 | 歌曲不存在或无可翻译歌词 |
 | 400 | 翻译引擎未配置 API Key |
-| 500 | 翻译引擎调用失败（body 含原始错误信息） |
+| 500 | 翻译引擎调用失败。body 固定为 `translation failed, see server logs for details`（`text/plain`），**刻意不含上游原文**——该端点任何登录用户都能调，回显会把引擎密钥/URL 带出去 |
 
 ---
 
@@ -106,7 +115,7 @@ Authorization: Bearer <token>
 
 ```
 GET /api/lyrics/translate/{songId}?lang=zh-CN
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 ```
 
 - 缓存存在 → 200 + 同上 JSON 结构  
@@ -121,16 +130,24 @@ Authorization: Bearer <token>
 **获取配置**
 ```
 GET /api/lyrics/translation/config
-Authorization: Bearer <admin-token>
+X-ND-Authorization: Bearer <admin-token>
 ```
 
-响应 200（密钥字段脱敏为 `******`）：
+响应 200。脱敏由 `core/lyrics` 的 `MaskSecret` 决定，不是固定的 `******`：
+
+| 长度 | 掩码形态 |
+|---|---|
+| 0 | `""`（空值原样返回） |
+| ≤ 6 | `******` |
+| ≤ 12 | `ab****yz`（首 2 + 尾 2） |
+| 更长 | `abc****wxyz`（首 3 + 尾 4） |
+
 ```json
 {
   "enabled": true,
   "engine": "gemini",
   "model": "gemini-flash-latest",
-  "apiKey": "******",
+  "apiKey": "abc****wxyz",
   "secretKey": "",
   "appId": "",
   "targetLanguage": "zh-CN",
@@ -139,20 +156,56 @@ Authorization: Bearer <admin-token>
 }
 ```
 
+> **只有 `apiKey` 与 `secretKey` 被脱敏，`appId` 是明文**（它不是密钥）。
+
+**掩码往返契约（重要）**：把带 `****` 的值原样 PUT 回去会被理解为"沿用库中原值"，
+而不是把字面量 `abc****wxyz` 存进去。所以客户端可以"读出来→改一个字段→整份提交"，
+不用先剥掉掩码。
+
 **更新配置**
 ```
 PUT /api/lyrics/translation/config
 Content-Type: application/json
-Authorization: Bearer <admin-token>
+X-ND-Authorization: Bearer <admin-token>
 ```
+
+响应 `200 {"status":"ok"}`。
+
+### 3.5 缓存与批量重译端点（管理员）
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/lyrics/translation/cache` | 列出磁盘缓存，返回 `{"items":[...],"total":N}`。**不检查 `enabled`**——关掉总开关后仍可读 |
+| `DELETE /api/lyrics/translation/cache` | 清空全部缓存，返回 `{"status":"ok","cleared":N}` |
+| `DELETE /api/lyrics/translation/cache/{id}?lang=` | 删单条。**不带 `lang` 会删掉该歌曲所有语言** |
+| `POST /api/lyrics/translation/retranslate-all` | 启动后台批量重译。已在运行时返回 400；无缓存条目也 400 |
+| `GET /api/lyrics/translation/retranslate-status` | 进度：`{running, canceling?, total, processed, success, failed, current, lastError?, startedAt}` |
+| `POST /api/lyrics/translation/retranslate-cancel` | 请求停止 |
+
+> **取消是"软"的**：`cancel` 只会把 `canceling` 置 true 并让 `running` 保持 true，
+> worker 只在**两首歌之间**看标志（每首间隔 350ms），正在处理的那首做完才会停。
+> 这样设计是为了防止"界面显示已停止 → 用户再点一次开始 → 两个 worker 互相污染
+> 同一份计数器"（服务端用 `batchGen` 代次丢弃过期写入）。客户端轮询到
+> `running == false` 才算真的结束。
 
 **连通性测试**
 ```
 POST /api/lyrics/translation/test
 Content-Type: application/json
-Authorization: Bearer <admin-token>
+X-ND-Authorization: Bearer <admin-token>
 ```
-请求体同配置对象，后端将使用给定的配置翻译一句测试歌词，成功返回 200 `{"status":"ok","sample":"..."}`，失败返回 500 原始错误。
+请求体**不是**配置对象本身，而是 `{config, sampleText}`：
+
+```json
+{
+  "config": { "engine": "gemini", "apiKey": "...", "model": "gemini-flash-latest" },
+  "sampleText": "Hello world"
+}
+```
+
+- 成功：`200 {"success":true,"result":"..."}`
+- 失败：`400 {"success":false,"error":"..."}`（**是 400，不是 500**；这里会带上
+  引擎返回的错误原文，所以只应被管理员用来调试）
 
 ---
 
@@ -261,7 +314,7 @@ TOKEN=$(curl -s -X POST https://your-navidrome/auth/login \
 # 查缓存
 curl -s -o /dev/null -w "%{http_code}" \
   "https://your-navidrome/api/lyrics/translate/abc123?lang=zh-CN" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "X-ND-Authorization: Bearer $TOKEN"
 
 # 触发翻译（缓存 miss 时）
 curl -s -X POST https://your-navidrome/api/lyrics/translate \

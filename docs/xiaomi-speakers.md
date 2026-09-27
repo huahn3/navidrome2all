@@ -65,11 +65,11 @@ DLNA 模式限制：DLNA 播放时不能用语音切歌（但语音可控制播�
 
 | 能力 | 支持度 | 说明 |
 |---|---|---|
-| Play(URL) | ✅（云端文本指令） | 文本指令 `播放 <url>`；URL 需音箱可达、建议带 `.mp3` 扩展名（小爱对无扩展名 URL 可能拒播） |
+| Play(URL) | ✅ | **优先 Mina/Ubus**（`api2.mina.mi.com`，需 passToken），失败才回退文本指令 `播放 <url>`；URL 需音箱可达、建议带 `.mp3` 扩展名（小爱对无扩展名 URL 可能拒播） |
 | Pause/Resume | ✅ | siid=4 aiid=1/2（MIoT 动作，本地/云皆可） |
-| Stop | ⚠️ | spec 无 stop 动作 → 用 pause 近似 |
+| Stop | ⚠️ | spec 无 stop 动作：Mina 通道下是真 stop（`playerMinaOperation(did,"stop")`），回退到本地/文本指令时用 pause 近似 |
 | Prev/Next | ✅ 设备支持，**本 fork 不暴露** | siid=4 aiid=4/3。播放队列由浏览器端持有，切歌由前端下发下一首的 `Play`；`PlayerDriver` 里没有 Next/Prev，驱动里也不要有（曾实现过，因不可达已删除） |
-| Seek | ❌ | spec 无 seek 动作 → 驱动返回不支持，UI 禁用/忽略 |
+| Seek | ⚠️ 驱动支持 | spec 无 seek 动作，但驱动用「带 `timeOffset=N` 的流地址重播」实现（`timeOffset` 是 Subsonic `/rest/stream` 的真实参数）。未播过任何东西时返回 400 `cannot seek before playing a track`。**网页 UI 仍不发**（`Player.jsx` 拦掉了），第三方 API 客户端可用 |
 | SetVolume | ✅ | siid=2 piid=1（L7A 3~100 / S12 1~100） |
 | GetState | ⚠️ | 只有 空闲/播放中（S12 多 Pause）；**无进度、无曲名** → 返回缓存状态 + 设备 playing-state |
 | 进度上报 | ❌ | 文本指令播放不回报进度 → 前端跳过漂移校准，进度条纯靠本地时钟（现有静音时钟方案天然适配） |
@@ -89,12 +89,17 @@ DLNA 模式限制：DLNA 播放时不能用语音切歌（但语音可控制播�
    - 本地 miio 传输层 `xiaomi_miio.go`（UDP 54321 + AES-128-CBC，零外部依赖）：
      hello 握手学习 did/stamp、`get_properties` / `set_properties` / `action`；
      控制/音量/状态全走本地
-   - 可选云端客户端 `xiaomi_cloud.go`（仅用于 `Play(URL)` 的文本指令；
-     passport 三步登录 + SHA1 签名调 `miotspec/action`；配置了账号时 Play 优先走云端）
+   - 可选云端客户端 `xiaomi_cloud.go`：passport 登录 + SHA1 签名调用小米云。
+     包含**两条**通道——Mina/Ubus（`api2.mina.mi.com`，Play/Pause/Stop/SetVolume/
+     GetState 的**首选**）与 MIoT `miotspec/action` 文本指令（回退）。
+     Mina 通道**必须有 passToken**（`PassToken` 字段直填，或 `Account`+`Password`
+     登录时自动换取）
    - `JukeboxOutputDevice` 新增字段：`Token`（本地）、`DID`、`Model`
-     （决定 siid/aiid 默认值，内置 l7a/s12/l05b 表）、`Account`/`Password`（云端）、
-     `TextDirective`（如 `"5-5"`，允许按型号覆盖）
-   - `Seek` 返回包装 `ErrInvalidCommand` 的"不支持"错误（→400）；`Stop` 以 Pause 近似；
+     （决定 siid/aiid 默认值，内置 **l7a / l07a / l05b** 表——注意**没有 `s12`**，
+     小爱同学一代走 DLNA 而非本驱动）、`Account`/`Password`/`PassToken`（云端，
+     `PassToken` 优先且免密）、`TextDirective`（如 `"5-5"`，允许按型号覆盖）
+   - `Seek` 用带 `timeOffset` 的重播实现（未播过时 400）；`Stop` 在 Mina 通道下是真 stop，
+     回退路径以 Pause 近似；
      `GetState` 返回 playing-state 映射 + 音量；Play 后 10 秒宽限期内忽略 idle 读数
      （音箱拉流缓冲中），无进度（currentTime 恒 0）
 3. **`newDriver` 注册** `TypeXiaomi = "xiaomi"`（已实现）。
@@ -117,11 +122,14 @@ Type = "xiaomi"
 Address = "192.168.1.30"       # 音箱 IP（本地 miio，UDP 54321；纯云端模式也必须填一个地址字段）
 Token = "00112233445566778899aabbccddeeff"  # 本地 miio token（32 hex）
 DID = "123456789"              # 数字设备 ID；有 token 时可省略（握手自动学习），纯云端必填
-Model = "l7a"                  # 决定 siid/aiid 默认值（l7a/s12/l05b；其他型号用 Play 系列默认 + TextDirective 覆盖）
+Model = "l7a"                  # 决定 siid/aiid 默认值（l7a / l07a / l05b；其他型号用 Play 系列默认 + TextDirective 覆盖）
 # TextDirective = "5-5"        # 可选：execute-text-directive 的 siid-aiid 覆盖
-# 云端（配置了 Account+Password 时 Play 优先走云端文本指令）：
-Account = "13800000000"
-Password = "..."
+# 云端（Mina/Ubus 通道需要 passToken；Account+Password 登录时会自动换取）
+PassToken = "..."              # 直填最省事，优先于 Account+Password
+# Account = "13800000000"
+# Password = "..."
+#
+# 注意：Token 与云端凭据同配时，本地 miIO 的音量通道会被跳过（只走云端）
 ```
 
 > 说明：`Address` 目前是必填字段（驱动工厂统一校验）。纯云端模式暂时也需填

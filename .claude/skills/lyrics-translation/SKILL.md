@@ -41,40 +41,49 @@ ui/src/
 
 ### Redux 状态（`state.player`）
 
-- `bilingualActive`: boolean，当前曲目是否处于双语/翻译显示模式。
+- `bilingualTrackId`: string | null，**当前曲目**的双语标记。判定一律用导出的纯函数
+  `isBilingualTrack(state, trackId)`（`ui/src/reducers/playerReducer.js`）。
+  > 不要引入全局 boolean：那样"给 A 翻译后切到 B，B 的按钮也会显示已双语"。
 - `originalLyrics`: `{ [trackId]: string }`，缓存曲目原始 LRC 文本。
 - `bilingualLyrics`: `{ [trackId]: string }`，缓存曲目翻译后双语 LRC（优先 `inlineLrc`，备选 `bilingualLrc`）。
 
 ### 双层歌词同步机制
 
 1. **抽屉/全屏歌词组件**：订阅 Redux `state.player`，响应式更新。
-2. **底栏单行悬浮歌词（`music-player-lyric`）**：由 `navidrome-music-player` 内部维护，**只认** `playerRef.current.state.audioLists[playIndex].lyric`。
+2. **底栏单行悬浮歌词（`music-player-lyric`）**：由 `navidrome-music-player` 内部维护，
+   **只认** `playerRef.current.state.audioLists[playIndex].lyric`。
 
-**切换双语时的三重动作（必须同时触发，见 `TranslateButton.jsx`）**：
+**切换双语实际只做一件事**——`TranslateButton.jsx` 唯一的 action：
 ```javascript
-// 1. 更新 Redux 状态
-dispatch(setBilingualActive(targetState))
-dispatch(setBilingualLyric(songId, targetLrc))
-
-// 2. 替换播放器内核当前歌曲的 lyric 字段
-playerRef.current.state.audioLists[playIndex].lyric = targetLrc
-
-// 3. 立即重置解析器并以当前时间驱动重绘
-playerRef.current.initLyricParser()
-playerRef.current.update(currentTimeMs)
+dispatch(updateSongLyric(trackId, lrc, isBilingual))
 ```
-> ⚠️ **关键坑**：只改 Redux 状态不改 `audioLists` 和 `initLyricParser`，底栏桌面悬浮歌词会一直停留在旧歌词，用户会认为"翻译没生效"！
+（`ui/src/actions/player.js`。仓库里**没有** `setBilingualActive` / `setBilingualLyric`
+这类 action，写了就是死代码。）
 
-### 队列防回滚保护（`Player.jsx`）
+内核注入与解析器刷新由 `Player.jsx` 里依赖 `playerState.current?.lyric` 的 effect
+统一完成（`ui/src/audioplayer/Player.jsx`，约 500 行起）：
+1. 按 `trackId` 匹配写 `player.state.audioLists` 的**所有**条目（不是只写当前那条——
+   否则 `updateAudioLists` 会从队列数据把它盖回去）；
+2. 再写 `audioLists[playIndex].lyric`；
+3. 若 `state.lyric !== currentLyric` → `setState({lyric}, cb => player.initLyricParser())`；
+   否则只 `player.lyric.update(ms)` 让单行滚动跟上时间。
 
-播放器在 `reduceSyncQueue` 和 `reduceCurrent` 中，会在用户调整队列或切歌时从传入列表中覆盖 `audioLists`。
-当 `bilingualActive === true` 时，必须保留已经注入的最新双语 `lyric`，禁止被传入的未翻译旧歌词覆盖。
+> ⚠️ **关键坑**：组件里**不要**自己碰 `playerRef`。只 dispatch 就够了，
+> 手写一遍内核注入反而会漏掉上面第 1 步的全量匹配。
+
+### 队列侧的保护在 reducer，不在 Player.jsx
+
+`reduceSyncQueue` 在合并队列时，只要队内已有不同且非空的 lyric 就**保留旧值**
+（无条件生效，不看双语标记）；`reduceCurrent` 把队列里的 lyric 回填进 `current`，
+并**仅在曲目真的变了**时把 `bilingualTrackId` 清空。`isBilingualTrack` 用在两处：
+`reduceUpdateSongLyric`（决定新的 `bilingualTrackId`）和 `reduceCurrent`
+（判断"当前曲目的原文还没记下来"时跳过写缓存）。
 
 ---
 
-## 3. 三种歌词输出格式
+## 3. 歌词输出格式（3 种 LRC + 1 种结构化）
 
-后端 `buildTranslationResult`（`core/lyrics/translation.go`）每次翻译都会合成三种格式：
+后端 `buildTranslationResult`（`core/lyrics/translation.go`）每次翻译都会合成：
 
 1. **`inlineLrc`（单行合并，底栏最推荐）**：
    ```lrc
@@ -95,6 +104,14 @@ playerRef.current.update(currentTimeMs)
    ```
 4. **`lines`（结构化数组）**：
    `[{ index: 0, start: 12340, end: 15670, original: "...", translation: "..." }]`，供第三方客户端使用。
+
+> **译文与原文相同时，三种 LRC 都只输出一遍原文**（比较前 `TrimSpace`，所以只有空白
+> 差异也算相同；译文为空同理）。上面示例若 `translation` 等于 `original`，`bilingualLrc`
+> 就是一行 `[00:12.34]Original line`，不会出现重复两行。
+> 这是修过的 bug——引擎对专有名词、纯外文歌词、人名常原样返回，重复行非常显眼。
+>
+> **`lines[]` 不去重**：`translation` 保留引擎返回的原样重复原文。用结构化数据渲染的
+> 客户端要自己判断 `translation === original`。
 
 ---
 

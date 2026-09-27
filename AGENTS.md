@@ -12,18 +12,20 @@ Navidrome 的私有 fork，核心二开包含两大能力：
 2. **歌词翻译与双语对照（Lyrics Translation）**：内置 5 大翻译引擎（Gemini、智谱 GLM-4、OpenAI/DeepSeek、百度、Google），实现按需翻译、双语同步、单行悬浮歌词与抽屉全屏歌词双层即时同步，独立管理后台，磁盘永久缓存。
 
 - 上游：`https://github.com/navidrome/navidrome`，基线 commit `ee6dd1bc`。
-- **本仓库的 git 历史已重置为单条初始提交，与上游没有共同祖先**，所以只能 `diff` 不能 `merge`。
+- **本仓库的 git 历史已重置过（现有十余个提交），与上游没有共同祖先**，所以只能 `diff` 不能 `merge`。
   如何比对上游见 `docs/fork-and-upstream.md`。
 - remote 约定：`upstream` = 上面的只读参照（**永远不要向它 push**）；`origin` = 仓库主人的 GitHub，
   由他自己添加并 push。**不要把 `origin` 指回 navidrome。**
 - 默认分支是 **`master`**，不要"顺手改成 main"（与上游一致，便于 `diff` 对照）。
   本 fork 已**删除全部 GitHub Actions workflows 与 dependabot 配置**，没有任何线上 CI，
   第 2 节的构建/测试/lint 命令必须自己在本地跑。
-- `.gitignore` 里的模式**都是无前导斜杠的**，因此会匹配任意层级。历史上真实踩过两次：
+- `.gitignore` 里历史遗留的若干模式**是无前导斜杠的**，会匹配任意层级。
+  （`/artwork/` 等后加条目已写成根锚定形式。）历史上真实踩过两次：
   `artwork/` 把整个 `core/artwork/` Go 包吞掉了（81 个源文件差点没提交），
   `AGENTS.md` 也被上游那一条忽略掉了（本 fork 已把它改回跟踪，见第 9 节）。
   新增忽略规则一律写绝对形式（`/artwork/`），并跑
-  `git diff --diff-filter=D --name-only <upstream-base> HEAD` 确认为空。
+  `git diff --diff-filter=D --name-only <upstream-base> HEAD | grep -v '^\.github/'` 确认为空
+  （本 fork 故意删掉的 workflows/dependabot 会被排除掉）。
 - 许可：GPLv3。`LICENSE` 与所有上游文件的版权头必须保留；对外分发二进制/镜像必须连带完整源码。
 - 面向人的功能文档：`docs/jukebox.md`（多输出端配置/API/驱动行为/故障排查）、
   `docs/jukebox-api.md`（多输出端 Jukebox API 与第三方客户端集成指南）、
@@ -40,8 +42,8 @@ Go **必须带 build tags**，否则编译失败（sqlite 需要 `sqlite_fts5`�
 ```bash
 # 单包测试（Ginkgo v2 + Gomega）
 make test PKG=./core/jukebox        # 125 specs
-make test PKG=./server/nativeapi    # 197 specs
-make test PKG=./core/lyrics         # 42 specs（歌词引擎与翻译缓存）
+make test PKG=./server/nativeapi    # 198 specs
+make test PKG=./core/lyrics         # 41 specs（歌词引擎与翻译缓存）
 make test PKG=./core/scrobbler      # 104 specs
 # 等价裸命令
 go test -tags=netgo,sqlite_fts5 ./core/jukebox ./server/nativeapi ./core/lyrics
@@ -104,10 +106,15 @@ docker rm -f nd-smoke
 
 i18n 除了"三份都要写"，还要查**引用了但语言包里没有**的 key——那种 key 会静默回退到
 代码里的 `_:` 默认值（非默认语言下就表现为界面中英/中英混排），而 `make test-i18n`
-只校验"en 的 key 在翻译包里存在"，查不出这一类：
+**查不出这一类**——它只做 en.json → 翻译包的方向校验，且**只有"翻译包多出
+en.json 没有的 key"（extra）才判失败**；"en 有而某语言缺"（missing）只统计、不报错
+（36 份语言包不可能全部同步，缺翻译是常态）：
 
 ```bash
 python3 scripts/check-i18n-keys.py     # 期望：0 个 key 缺失
+
+# 核对文档/skills 里引用的路径、行号、符号、spec 数字是否与代码一致
+python3 scripts/verify-docs.py         # 路径/行号必须全部有效；spec 数字必须全部 OK
 ```
 
 本地跑一个实例（**同一时间只保留一台，一个 URL**）：
@@ -169,10 +176,12 @@ Web 端的歌词显示在架构上分为**两层**：
 **切换双语时的三重动作（必须同时触发，见 `ui/src/audioplayer/TranslateButton.jsx` 与 `Player.jsx`）**：
 1. **Redux 变更**：`dispatch(setBilingualActive(bool))`，并将翻译结果存入 `bilingualLyrics[trackId]`。
 2. **内核内存替换**：直接将目标歌词（原版或 `inlineLrc`）写入 `playerRef.current.state.audioLists[playIndex].lyric`。
-3. **唤醒解析器**：调用 `playerRef.current.initLyricParser()` 并立即以当前时间 `playerRef.current.update(currentTimeMs)` 重新计算渲染。
+3. **唤醒解析器**（由 `Player.jsx` 的 effect 统一做，不是组件里手写）：state 变了就
+   `setState({lyric}, cb => player.initLyricParser())`，没变则 `player.lyric.update(ms)`
+   让单行滚动跟上时间。
    *原因*：只改 Redux 不改内核 `audioLists` 和解析器，全屏抽屉虽然变了，但底栏/桌面悬浮歌词会一直停在旧歌词。
 
-**队列同步保护（防回滚，见 `ui/src/audioplayer/Player.jsx`）**：
+**队列同步保护（防回滚，代码在 `ui/src/reducers/playerReducer.js`）**：
 播放器内核在 `reduceSyncQueue` 和 `reduceCurrent` 中，会在用户调整播放队列或切歌时用传入的 queue item 覆盖 `audioLists`。
 如果当前曲目处于双语激活状态（`isBilingualTrack(state, trackId)`，即
 `bilingualTrackId === trackId`），**必须保留已注入的双语 `lyric`**，严禁被队列项里的
@@ -240,10 +249,13 @@ Web 端的歌词显示在架构上分为**两层**：
   `music_directory` 必须与 `MusicFolder` 同一份内容，且歌曲要被 MPD 自己索引过
   （`mpc update` 或 `auto_update "yes"`）；Navidrome 扫描不会同步 MPD。
   `PathFrom/PathTo` 只是相对路径的首次字符串替换，别拿它做容器路径映射。
-- 小爱音箱（`type=xiaomi`）**不支持 seek**（返回 `ErrInvalidCommand` → 400，前端不转发拖动）、
-  `Stop` 用 Pause 近似、**无进度回报**（`currentTime` 恒 0）；控音量必须有 `Token`（本地 miIO）。
-  真机上本地 miIO 路径仍未实测，可用型号差异靠 `Model`（`l7a`/`s12`/`l05b`）与
-  `TextDirective`（`siid-aiid`）覆盖。
+- 小爱音箱（`type=xiaomi`）**驱动支持 seek**（`Seek` 用带 `timeOffset` 的流地址重播，
+  只有"还没播过任何东西"才返回 `ErrInvalidCommand` → 400），但**无进度回报**
+  （`currentTime` 恒 0），前端因此不发用户拖动、也不做漂移校准。
+  云端优先走 Mina/Ubus 通道（`playMinaURL` / `playerMinaOperation` / `playerMinaSetVolume`），
+  失败才回退文本指令；**音量不一定需要 `Token`**（云端也能控）。
+  型号映射表只认 `l7a`/`l07a`/`l05b`（**没有 `s12`**），可用 `TextDirective`（`siid-aiid`）覆盖。
+  真机上本地 miIO 路径仍未实测。
 - DLNA 设备可能**接受 `Seek` 却忽略它**（实测小爱 S12 在 `Play` 后立刻 `Seek` 返回 200 但不跳转）。
   驱动以"回报位置是否到达目标"判定并重发（`dlnaSeekAttempts`，最多 3 次）。
 
@@ -263,7 +275,9 @@ Web 端的歌词显示在架构上分为**两层**：
   （里面存 token/密码）。
 - 服务器重启后**选中态会重置回浏览器**，前端 `jukebox.js` 靠 `ensureSelected` 补发选择，别去掉。
 - 输出配置持久化在数据库（`core/jukebox/outputs_store.go`），按 `ID` 覆盖 TOML 里的同名条目；
-  `ID` 必须是 1-64 位 `[a-zA-Z0-9_-]`。
+  `ID` 必须匹配 `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`（**首字符必须是字母或数字**），
+  且 `browser` 是保留字。**服务端不会替留空的 `id` 生成**——ID 自动生成只发生在前端
+  `ui/src/jukebox/outputConstants.js` 的 `suggestId()`，第三方客户端必须自己生成。
 - **输出凭据是脱敏往返**：`GET /api/jukebox/outputs` 把 password/token/账号口令换成
   `SECRET_MASK` 返回；编辑时提交的值若等于掩码，后端理解为"沿用库里原值"而不是
   写入字面量掩码。别把掩码当真值存回去，也别在前端把它显示给用户。
@@ -280,15 +294,16 @@ Web 端的歌词显示在架构上分为**两层**：
   "已添加 0 台输出设备，N 台失败"——看起来像批量功能坏了，其实是鉴权。
   统一用 `ui/src/audioplayer/jukebox.js` 里的封装（内部走 `httpClient`），
   新增端点时在那里加函数，不要在组件里直接 fetch。
-- **离线设备的小米云会回 `0.0.0.1`** 这种占位地址。`isUsableDevice` 必须排除
-  `0.0.0.x`，否则离线音箱会进"推荐"、能被勾选，保存下来是一条永远连不上的
-  坏配置。
 - **小爱音箱的批量流程**：第 2 步只做"登录 + 勾选"（**不要**在第 2 步放单台
   表单）；第 3 步按 `values.xiaomiDevices` 逐台渲染卡片并逐台 POST。
   `validate` 必须按 `isBatch` 分叉——顶层 `name`/`address` 在批量模式下不存在，
   不分叉的话 `Form` 的 onSubmit 永远不会触发（表现为"保存能点但没反应"）。
-- **离线音箱（小米云回 `0.0.0.1`）要允许勾选**，只是不预填地址、标"需手填"。
-  禁掉勾选框等于让用户没法批量添加——他本来就知道真实 IP。
+- **离线音箱（小米云回 `0.0.0.1`）要允许勾选**。`isUsableDevice` 只判
+  `localip` 存不存在（`XiaomiAuthBlock.jsx`），**不要**排除 `0.0.0.x`——禁掉勾选框
+  等于让用户没法批量添加，他本来就知道真实 IP。正确做法是：占位地址不预填进表单、
+  列表里标"局域网 IP: 未知，需手填"（`isPlaceholderIP` / `needsManualAddress`），
+  再由**提交校验**拦住（`OutputEditorDialog.jsx` 的批量 validate 会报
+  "0.0.0.x 是占位地址"）。
 - **`OutputEditorDialog.test.jsx` 把 `XiaomiAuthBlock` 整个 mock 掉了**，
   改两者之间的 props 契约（尤其是 `formData`）时必须另外跑
   `OutputEditorDialog.mount.test.jsx`——那个文件刻意不 mock，专守挂载路径。
@@ -336,6 +351,7 @@ core/jukebox/            本 fork 的播放后端（唯一真源）
   discover_mpd.go        MPD 私网 /24 扫描 + 密码探测 + 连通性验证
   outputs_store.go       输出配置的 DB 读写
 core/lyrics/             本 fork 的歌词翻译中枢
+  lyrics.go / sources.go 歌词来源（内嵌/外置文件）与解析
   provider_errors.go     错误脱敏（丢 URL）+ 响应体限量/截断
   batch_internal_test.go 批量重译代次竞态回归（package lyrics，看得到未导出字段）
   translation.go         TranslationService 单例 / 磁盘缓存 / singleflight / inlineLrc 合成
@@ -347,6 +363,7 @@ core/lyrics/             本 fork 的歌词翻译中枢
 conf/configuration.go    [Jukebox] 段：Enabled（网页多输出端）/ SubsonicEnabled（上游 mpv）/ AdminOnly / Devices / Default / Outputs
 server/nativeapi/
   jukebox.go             /api/jukebox/{devices,status,select,play,control} + 流 URL 生成 + 错误映射
+  playback_sessions.go   /api/playback/sessions 列表 + takeover（带会话归属校验）
   jukebox_outputs.go     /api/jukebox/outputs CRUD、/discover(DLNA+MPD)、/verify/mpd（admin-only）
   lyrics_translation.go  /api/lyrics/translate 与 /config /test 管理接口
   config.go              /api/config 响应脱敏（注意 Jukebox.Outputs 是 slice，要递归进去）
@@ -366,12 +383,14 @@ ui/src/lyricsTranslation/
 ui/src/layout/
   LyricsTranslationMenu.jsx 侧边栏菜单项
 ui/src/jukebox/          管理 → 输出设备（自定义卡片页 + 三步向导弹窗，路由 /jukebox-outputs）
+  XiaomiAuthBlock.jsx   小米扫码/账密/passToken 登录 + 设备发现与勾选
+  OutputEditorDialog.mount.test.jsx 刻意不 mock 子组件，守挂载路径（改了 props 必跑）
   JukeboxOutputs.jsx     卡片列表、header 新增按钮、移动端 FAB、选择后 dispatch(setOutputDevice)
   OutputEditorDialog.jsx 三步向导：1.类型卡片 → 2.连接(按类型裁剪) → 3.高级(可选)
   outputConstants.js     SECRET_MASK / EMPTY_OUTPUT
 ui/src/audioplayer/volume.js  音量换算与限幅纯函数（测试覆盖，禁止再散落 clamp/²）
 ui/src/themes/useCurrentTheme.js  主题应用：注入 player.stylesheet + 写 --nd-dock-* 变量
-ui/src/themes/*.js               28 个主题；**每个都必须声明 palette.type**（缺了播放 dock 会误判深浅）
+ui/src/themes/*.js               27 个主题；**每个都必须声明 palette.type**（缺了播放 dock 会误判深浅）
 ui/src/index.css                  .responsive-fields：手机端窄屏防溢出（见第 9 节）
 ui/src/reducers/playerReducer.js   outputDevice 与 bilingualTrackId/Lyrics 状态与迁移、isBilingualTrack 判定
 ui/src/store/createAdminStore.js   持久化白名单 + 音量 0 兜底
@@ -382,6 +401,8 @@ docs/                    面向人的文档（见第 1 节）
   handoff-client-integration.md 播放接管集成指南
 scripts/xiaomi_test_server.go 小米假设备（凭据走环境变量，见 scripts/.env.example）
 scripts/validate-translations.sh `make test-i18n` 的实现（校验 36 份语言包与 en.json 的 key 对齐）
+scripts/verify-docs.py    核对文档/skills 引用的路径、行号、符号、spec 数字（改文档后必跑）
+scripts/preflight.sh      Jukebox 部署自检（5 段只读检查，**仓库里唯一一份**）
 scripts/check-i18n-keys.py     校验"源码引用了但语言包里没有"的 key（单向校验查不出的一类）
 contrib/jukebox-testing/ 假 MPD / 假 DLNA 服务器（不接真设备复现链路）
 .claude/skills/ .qoder/skills/  AI 技能：build-and-test、add-jukebox-driver、jukebox-e2e、nas-jukebox-deploy、lyrics-translation、playback-handoff
@@ -408,8 +429,9 @@ contrib/jukebox-testing/ 假 MPD / 假 DLNA 服务器（不接真设备复现链
 9. 新增翻译引擎：按 `.claude/skills/lyrics-translation/SKILL.md` 的清单补齐
    Provider/配置字段/表单/i18n/单测
 10. 提交前：`git status --short` 只应剩预期文件；改过 `.gitignore` 时另跑
-   `git diff --diff-filter=D --name-only ee6dd1bc HEAD`，输出必须为空
-   （非空说明有上游源文件被忽略规则吃掉了，见第 1 节）。
+   `git diff --diff-filter=D --name-only ee6dd1bc HEAD | grep -v '^\.github/'`，
+   应为空——输出里的 `.github/` 是本 fork **故意**删掉的 workflows/dependabot（见第 1 节），
+   出现非 `.github/` 的行才说明有上游源文件被忽略规则吃掉了。
 
 ## 9. 手机端适配（自研页面必读）
 
@@ -419,9 +441,10 @@ min-content 超过视口，整页就被撑宽，右侧按钮/文字落到屏幕�
 
 九条硬规则：
 
-1. **自研表单页的容器加 `className="responsive-fields"`**。`ui/src/index.css` 里已备好
-   `width:0 + min-width:100%` 的输入控件规则——给控件加 `min-width: 0` **没用**，
-   它不影响 min-content 贡献值。
+1. **自研表单页的容器加 `className="responsive-fields"`**。`ui/src/index.css` 里针对它
+   的规则是 `min-width: 0` + `text-overflow: ellipsis` + grid `minmax(0,1fr)`
+   （**刻意没有** `width:0 + min-width:100%` 那种老写法）——所以给控件单独加
+   `min-width: 0` 不够，要落在容器的 grid/flex 子项上。
 2. **穿透 MUI 内部类名的规则只能写进 `ui/src/index.css`**，不能写进 `makeStyles` 的
    `'& .MuiSelect-select'`——后者在本项目构建下不生成规则（只有伪类生效）。
 3. **不要按固定高度算列表高度**（条目会因标题换行变高），用 `min(按条数算的值, 60vh)`

@@ -11,7 +11,7 @@
 |---|---|
 | 上游仓库 | `https://github.com/navidrome/navidrome` |
 | 二开基线（上游 commit） | `ee6dd1bc`（上游 2026-09-23 的 master） |
-| 本仓库历史 | 单条初始提交，**与上游无共同祖先** |
+| 本仓库历史 | 已重置过（现有十余个提交），**与上游无共同祖先** |
 | 默认分支 | **`master`**，见下 |
 | 旧历史备份 | 重置时的完整 `.git` 移到仓库外的 `navidrome2all-git-backup/`，目录里有 `BACKUP-INFO.txt` 说明如何恢复；确认新仓库无误后可删 |
 
@@ -27,7 +27,8 @@
 `upstream` 已经在本仓库里配好并 fetch 过（`git remote -v` 可见），只需要补上你自己的仓库：
 
 ```bash
-git remote add origin https://github.com/<你的账号>/<仓库名>.git
+# origin 已经指向 https://github.com/huahn3/navidrome2all.git，别再 add
+git remote -v                          # 确认一下
 git push -u origin master
 ```
 

@@ -1085,3 +1085,82 @@ a bare fetch` 直接 stub 全局 `fetch` 为抛错，确保这条路不会再退
 `name` 不给 `id`，MUI 生成的 `<label for>` 与 `<input>` 对不上，**读屏软件读不到
 这些字段**（`getByLabelText` 也找不到）。现在由 `name` 派生 `id`
 （`nd-out-<name>`），本向导所有表单字段一次性修好。
+
+---
+
+## 13. 文档与代码一致性审计（2026-09-28）
+
+起因：用户要求"必须是真实存在的代码逻辑，而不是靠老的文档来完善，导致错上加错"。
+做法：**先读代码，再改文档**；每条结论都给出证据文件与行号。机器能判的交给
+`scripts/verify-docs.py`（新增），语义正确的派 subagent 逐条对照。
+
+### 13.1 修掉的真错误（会直接让集成方失败）
+
+| 位置 | 文档说 | 代码实际 |
+|---|---|---|
+| `jukebox-api.md` 鉴权 | `Authorization: Bearer` | **只认** `X-ND-Authorization`（`server/auth.go:192`），发标准头一律 401。**四份文档共 30 处** |
+| `jukebox-api.md` `/select` | `deviceId` | `device_id`（`server/nativeapi/jukebox.go:78`）。发错**不报错**：`Select("")` 被当切回浏览器，200 + `{"selected":"browser"}` 静默切走 |
+| `jukebox-api.md` `/play` | `songId`/`streamUrl` | `song_id`/`stream_url`（`:100-102`）。发 camelCase 必 400 |
+| `jukebox-api.md` 类型枚举 | `type: browser` | **ID 是 `browser`，`type` 是 `builtin`**（`manager.go:120`）。按 `type=="browser"` 分支的客户端一个都匹配不上 |
+| `jukebox.md` / `jukebox-api.md` | `DiscoveredMPD.passwordLine` 字段 | **该字段不存在**（`discover_mpd.go:22-30`），示例 JSON 是虚构的 |
+| `jukebox.md` | "密码框旁会提示 mpd.conf 密码行" | 无此提示，只有 `needsPassword` 的 Chip |
+| 两份文档 `/verify/mpd` | `{"ok":true,"version":...,"authenticated":true}` | 实际 `{"status":"ok","address":...}`（`jukebox_outputs.go:392`），无 version/authenticated |
+| `jukebox-api.md` | "id 留空由服务端按 name 生成" | **服务端没有这个逻辑**，`ValidateOutput` 直接 400。生成只在前端 `suggestId()` |
+| 三份文档 | 小爱"不支持 seek（400）" | **已实现**：`Seek` 用带 `timeOffset` 的重播（`driver_xiaomi.go:322-349`），只有未播过才 400。共 8 处说反 |
+| 三份文档 | 云端只用"文本指令" | 还有 **Mina/Ubus 通道**且是首选（`playMinaURL`/`playerMinaOperation`/`playerMinaSetVolume`/`getMinaStatus`） |
+| 四份文档 | 无 `PassToken` | 它是**一等凭据**且优先于 `Account`+`Password`（`driver_xiaomi.go:140-144`） |
+| `jukebox.md` BaseUrl | 优先级含 `ShareURL` | 流地址走 `publicurl.AbsoluteURL`，**不读 `ShareURL`**（只有 `PublicURL` 读它）。只配 ShareURL 的用户会拿到 localhost |
+| `jukebox.md` | 探测 `/<UDN>.xml` | 实际第三个是 `/desc.xml`（`driver_dlna.go:57`） |
+| `playback-handoff-api.md` 鉴权 | "只认 `X-ND-Authorization`：标准的 `X-ND-Authorization` 会被拒" | 自我矛盾，首处应为 `Authorization` |
+| `playback-handoff-api.md` Retrofit | `@Header("Authorization")` | 会 401，应为 `X-ND-Authorization`（2 处） |
+| `lyrics-translation` SKILL §2 | "三重动作"含 `setBilingualActive`/`setBilingualLyric`/`playerRef.update()` | **全是虚构 API**（全仓零命中）。真实只有 `dispatch(updateSongLyric(...))`，内核注入由 `Player.jsx:500-536` 的 effect 做 |
+| `lyrics-translation` SKILL | `bilingualActive: boolean` | 是 `bilingualTrackId: string\|null` + `isBilingualTrack()` |
+| `lyrics-translation-api.md` `/test` | 请求体=配置对象，`{"status":"ok","sample":...}`，失败 500 | 实际 `{config, sampleText}` → `{success, result}`，失败 **400** |
+| `lyrics-translation-api.md` 500 | "body 含原始错误信息" | 固定 `translation failed, see server logs...`（有意脱敏，该端点任何登录用户可调） |
+| `lyrics-translation-api.md` 掩码 | `"apiKey": "******"` | `MaskSecret` 是 `ab****yz`/`abc****wxyz`；`appId` **不脱敏**；且要写明"提交掩码=沿用原值" |
+| 三份文档 `playMode` | `single`/`all`/`order` | 内核枚举是 `order`/`orderLoop`/`singleLoop`/`shufflePlay`。服务端不校验，发 `all` 会让网页端接管后循环模式失效 |
+| `handoff-client-integration.md` | takeover"永远 200" | **404**（`playback_sessions.go:251`），这是已修的旧行为 |
+| 三份文档 | 无 takeover 归属校验 | `caller.IsAdmin \|\| target.UserId == caller.ID`，否则 **403** |
+| `AGENTS.md` 小米批量 | "`isUsableDevice` 必须排除 `0.0.0.x`" | 与代码、与同节下一条**自相矛盾**。正确做法是允许勾选但不预填地址 |
+| `jukebox-e2e` SKILL | "id 留空 → 服务端按 name 生成" | 必得 400，示例 curl 抄了就失败 |
+| `AGENTS.md` `.gitignore` | "模式都是无前导斜杠的" | `/artwork/` 等约 15 条已根锚定 |
+| `AGENTS.md` §9 | "index.css 已备好 `width:0 + min-width:100%`" | 该规则已被显式移除 |
+
+### 13.2 顺手修掉的代码问题
+
+文档核对过程暴露了三个**真 bug**，都已修 + 补回归测试：
+
+1. **takeover 被 `Jukebox.Enabled` 门禁卡死**（我上一轮引入的回归）。
+   `Jukebox.Enabled` 默认 `false`，而我把 `jukeboxGuard` 放在了端点入口，
+   导致"只用本机播放"的部署**根本接管不了**（403 `jukebox is disabled`）。
+   门禁下沉到唯一真正需要 Jukebox 的那一步（`pauseRemoteOutputIfNeeded`），
+   跳过而不是拒绝。回归测试：`works even when Jukebox.Enabled is false (the default)`
+   ——该测试的 `BeforeEach` 原本把 `Enabled` 设成 true，正好绕过了这个 bug。
+2. **LRC 重复行**：译文与原文相同时 `bilingualLrc` 输出两遍原文
+   （`translation.go` else 分支格式串里 `orig` 出现两次）。
+3. **Subsonic `bilingual=true`** 缺相等判断，会把相同译文拼上去。
+   两处都补了 `TrimSpace` 比较与回归测试。
+
+### 13.3 工具与流程
+
+- 新增 `scripts/verify-docs.py`：校验文档/skills 里引用的**文件路径、行号、
+  函数符号、Ginkgo spec 数字**。它会剔除围栏代码块、只认行内反引号里的路径，
+  并有历史文件白名单（避免把"历史改动清单里当时的文件名"误报为错误）。
+  **改文档后必须跑**。目前路径/行号/spec 全部 OK。
+- 修 `make lint`（我引入的 G306）、收敛 `scripts/preflight.sh` 为唯一一份
+  （原先 `.claude`/`.qoder` 各有一份、与根目录那份又不同，且根目录那份的
+  JSON token 提取和 `timeout` 依赖在 macOS 上是坏的）。
+- `make test-i18n` 的**校验方向**此前在文档里写反了：它只对"翻译包多出 en
+  没有的 key"（extra）判失败，"en 有而某语言缺"（missing）只统计不报错
+  ——这是有意为之（36 份语言包不可能同步）。试过把 missing 也判失败，结果
+  34/36 语言包直接报错，不可行，**保持脚本原样，改文档**。
+
+### 13.4 这一轮的教训
+
+- 写文档时"顺手"抄代码注释不可靠：jukebox 源注释里 `ND_BASEURL (**or
+  ND_SHAREURL**)` 本身就是错的，文档照抄后又传播。
+- **测试自己把 bug 绕过去**比没有测试更危险：`playback_sessions_test.go` 在
+  `BeforeEach` 里打开 `Jukebox.Enabled`，正好让"门禁放错位置"永远测不出来。
+- subagent 的结论必须抽查。我逐条验证了最关键的 5 条（鉴权头、字段名、
+  `builtin`、`Seek` 实现、虚构 API），全部为真；但它也误报过
+  （把 `ui/src/i18n/provider.js` 截成 `en.js`、把前端符号报成"找不到"）。

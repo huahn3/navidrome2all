@@ -26,9 +26,14 @@
 所有 Native API 端点均位于 `/api/` 路径下，必须携带 Bearer Token：
 
 ```http
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 ```
-*(同时兼容 `X-ND-Authorization: Bearer <token>`)*
+
+> **只能用这个头**。`server/auth.go` 的 `tokenFromHeader()` 只读
+> `consts.UIAuthorizationHeader`（= `X-ND-Authorization`）。
+> 发标准的 `X-ND-Authorization: Bearer ...` 会得到 `401 {"error":"Not authenticated"}` ——
+> `/api` 路由组没挂 cookie/query 兜底，浏览器发出去的 cookie 也不管用。
+> Web 前端自己也是发 `X-ND-Authorization`（见 `ui/src/dataProvider/httpClient.js`）。
 
 > `<token>` 通过标准登录接口获取：
 > ```http
@@ -49,7 +54,7 @@ Authorization: Bearer <token>
 
 ```http
 GET /api/jukebox/devices
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 ```
 
 **响应示例 (200 OK)**：
@@ -59,7 +64,7 @@ Authorization: Bearer <token>
     {
       "id": "browser",
       "name": "本机播放",
-      "type": "browser"
+      "type": "builtin"
     },
     {
       "id": "mpd-living",
@@ -81,8 +86,12 @@ Authorization: Bearer <token>
 }
 ```
 
-- `browser`：系统保留的内置设备 ID，表示在客户端本机出声。
-- `type` 枚举：`browser`、`mpd`、`dlna`、`xiaomi`。
+- `browser`：系统保留的内置设备 **ID**，表示在客户端本机出声。
+- `type` 枚举：**`builtin`**、`mpd`、`dlna`、`xiaomi`。
+  > **ID 是 `browser` 但 `type` 是 `builtin`**，两者不是同一个词。内置设备这一项
+  > 是 `{"id": "browser", "type": "builtin"}`。按 `type == "browser"` 分支的客户端
+  > 会一个都匹配不上；前端就是按 `device.type === 'builtin'` 匹配的
+  > （`ui/src/audioplayer/DeviceSelector.jsx`）。
 - `selected`：当前服务端激活的设备 ID。
 
 ---
@@ -94,14 +103,19 @@ Authorization: Bearer <token>
 ```http
 POST /api/jukebox/select
 Content-Type: application/json
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 
 {
-  "deviceId": "dlna-bedroom"
+  "device_id": "dlna-bedroom"
 }
 ```
 
-**响应**：`200 OK` (切换成功) 或 `404 Not Found` (设备不存在)。  
+> **注意是 snake_case**（`device_id`），不是 `deviceId`。用错字段名不会报错：
+> 解出来是空串，`Select("")` 被当作"切回浏览器"并 `return nil`，于是你拿到
+> `200 OK {"selected":"browser"}`，输出被静默切到浏览器。
+
+**响应**：`200 OK` (切换成功) 或 **`400 Bad Request`** (设备不存在，错误文本
+`unknown jukebox device: <id>`)。  
 > **说明**：当切换为 `browser` 时，服务端会自动对先前激活的远程设备发送 `stop` 指令。
 
 ---
@@ -113,19 +127,25 @@ Authorization: Bearer <token>
 ```http
 POST /api/jukebox/play
 Content-Type: application/json
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 
 {
-  "songId": "7a3f8c2b",
+  "song_id": "7a3f8c2b",
   "position": 45
 }
 ```
 
+**请求体是 snake_case**（`song_id` / `stream_url` / `position`），但**响应体是
+camelCase**（`currentTime` / `deviceType`）——这不一致是真的，照着字段名表写代码时
+注意区分。
+
 | 字段 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `songId` | string | ✅ | Navidrome 曲目 ID |
+| `song_id` | string | ✅* | Navidrome 曲目 ID |
 | `position` | integer | ❌ | 开始播放的秒数，默认 `0`。切换设备无缝续播时传入客户端当前进度 |
-| `streamUrl` | string | ❌ | 可选自定义流地址。不填时服务端会自动生成带签名的局域网直通流 URL |
+| `stream_url` | string | ❌ | 可选自定义流地址。不填时服务端会自动生成带签名的局域网直通流 URL |
+
+> 用 camelCase 写会得到 `400 either song_id or stream_url is required`。
 
 **响应**：`200 OK`。
 
@@ -138,7 +158,7 @@ Authorization: Bearer <token>
 ```http
 POST /api/jukebox/control
 Content-Type: application/json
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 
 {
   "action": "pause"
@@ -163,7 +183,7 @@ Authorization: Bearer <token>
 
 ```http
 GET /api/jukebox/status
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 ```
 
 **响应示例 (200 OK)**：
@@ -191,18 +211,30 @@ Authorization: Bearer <token>
 - `GET /api/jukebox/discover?timeout=3`：在局域网内进行 SSDP M-SEARCH 扫描，自动发现附近的 DLNA / UPnP 渲染器设备。
 - `GET /api/jukebox/discover/mpd?port=6600&timeout=4`：扫描本机所在私网 `/24` 的 MPD
   （最多 32 并发、每地址 400ms，整体最长约 4s；扫不到属正常，手填地址即可）。
-  响应 `[{address, version, needsPassword, passwordLine}]`——`passwordLine` 是 `mpd.conf` 里
-  密码那一行，用于提示用户"密码取 `@` 前面的部分"。
+  响应 `[{address, host, port, version, needsPassword}]`（结构体见
+  `core/jukebox/discover_mpd.go` 的 `DiscoveredMPD`，**没有** `passwordLine` 这个字段）。
   ```json
-  [{"address":"192.168.31.88:6600","version":"0.21.11","needsPassword":true,
-    "passwordLine":"password \"secret@read,add,control\" @"}]
+  [{"address":"192.168.31.88:6600","host":"192.168.31.88","port":6600,
+    "version":"0.21.11","needsPassword":true}]
   ```
+  > `needsPassword=true` 表示"匿名登录被拒，即 `mpd.conf` 里配了密码"，
+  > 但服务端**不会**把密码那一行回给你。密码要自己去 MPD 主机上读：
+  > 取 `password` 行里 `@` 前面的部分（`@` 后面是权限列表，不要一起填）。
 - `POST /api/jukebox/verify/mpd`：校验一个 MPD 地址（建配置前先试通，省得存完选不中）。
   入参 `{"address":"host:port","password":"..."}`，成功返回
-  `{"ok":true,"version":"0.21.11","authenticated":true}`。
+  `{"status":"ok","address":"host:port"}`。
+  > 只有成功/失败之分，**没有** `version` / `authenticated` 字段——`core/jukebox` 的
+  > `VerifyMPD` 只返回 error。失败一律 502，body 是驱动错误原文。
 - `GET /api/jukebox/outputs`：获取已持久化保存的所有自定义输出设备。
-- `POST /api/jukebox/outputs`：创建新的输出设备。`id` 必须 1-64 位 `[a-zA-Z0-9_-]`，留空则由
-  服务端按 `name` 生成（`Living Room MPD` → `living-room-mpd`；纯中文名 → `xiaomi-54hp`）。
+- `POST /api/jukebox/outputs`：创建新的输出设备。`id` 必须匹配
+  `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`（**首字符必须是字母或数字**），且不能是保留字
+  `browser`。
+  > **`id` 留空不会被服务端补全**——直接 400。ID 自动生成（`Living Room MPD` →
+  > `living-room-mpd`；纯中文名 → `xiaomi-54hp`）只发生在 **Web 前端**的
+  > `ui/src/jukebox/outputConstants.js` 的 `suggestId()`，在保存前就填好了。
+  > 第三方客户端必须自己生成并保证唯一，否则撞上已存在的 ID 会得到
+  > `400 an output with this id already exists`。
+  > 成功返回 **201 Created**（不是 200）。
 - `PUT /api/jukebox/outputs/{id}`：修改已有设备。
 - `DELETE /api/jukebox/outputs/{id}`：删除输出设备。
 
@@ -232,14 +264,16 @@ Authorization: Bearer <token>
 
 ### 铁律 3: 依据 `deviceType` 动态降级
 - **`xiaomi` 原生协议**：
-  - 不支持精确 `seek`（调用会报 400 错误）。当 `deviceType == "xiaomi"` 时，客户端应在 UI 上将进度滑块禁用，或拦截拖拽事件并轻提示“该音箱不支持拖动跳转”。
+  - `xiaomi` **不回报进度**（`currentTime` 恒 0），所以客户端应禁用进度滑块或用本地时钟走进度。
+    但它的 `seek` 本身是**可用的**（驱动用带 `timeOffset` 的重播实现；只有尚未播放过
+    任何内容时返回 400）——所以这里可以照常转发拖拽，只是显示的进度是估算值。
   - 进度回报恒为 `0`，此时进度条必须完全依靠客户端本地播放估算时长推进。
 - **`dlna` 协议**：
   - 部分小爱音箱在刚收到 `Play` 指令时立即 `Seek` 会被忽略，服务端已内置 3 次校验重试，客户端只需发一次。
 
 ### 铁律 4: 切换设备时的无缝衔接
 - **切到远程**：记录本地当前播放位置 `val pos = player.currentPosition / 1000` -> 调用 `POST /api/jukebox/select` -> 调用 `POST /api/jukebox/play` 传入 `position = pos` -> 本地播放器静音并同步起步。
-- **切回本机**：调用 `POST /api/jukebox/select` 传入 `deviceId = "browser"`（服务端会自动暂停/停止远程设备） -> 本地播放器恢复音量并 `player.play()` 从原进度继续出声。
+- **切回本机**：调用 `POST /api/jukebox/select` 传入 `device_id = "browser"`（服务端会自动暂停/停止远程设备） -> 本地播放器恢复音量并 `player.play()` 从原进度继续出声。
 
 ---
 
@@ -256,7 +290,7 @@ data class JukeboxDevicesResponse(
 data class JukeboxDevice(
     val id: String,
     val name: String,
-    val type: String // "browser", "mpd", "dlna", "xiaomi"
+    val type: String // "builtin", "mpd", "dlna", "xiaomi"
 )
 
 data class JukeboxSelectRequest(
@@ -326,7 +360,7 @@ interface JukeboxService {
 | :--- | :--- | :--- |
 | **401** | 未鉴权 | Token 缺失、无效或已过期，请重新调用 `/auth/login` |
 | **403** | 权限不足或未开启 | 服务端 `Jukebox.Enabled = false`，或者服务端配置了 `Jukebox.AdminOnly = true` 且当前用户非管理员 |
-| **404** | 未找到 | 目标 `songId` 不存在，或者选择的 `deviceId` 不存在 |
+| **404** | 未找到 | 目前只有 `songId` 指向的媒体文件缺失。**设备不存在是 400**（`Select` 的错误直接走 400） |
 | **409** | 当前为本机输出 | 在 `selected == "browser"` 状态下向 `/api/jukebox/control` 发送了设备播控指令 |
-| **400** | 无效命令 / 参数越界 | 设备不支持该指令（如向 xiaomi 发送 seek），或音量值超出 0-100 范围 |
+| **400** | 无效命令 / 参数越界 | 目标 `songId` 不存在、选择的 `device_id` 不存在、**请求体字段名写错**（如 camelCase）、或驱动判定该指令当前不可用（如向尚未播放的 xiaomi 发 seek）；音量值超出 0-100 也归此类 |
 | **502** | 设备驱动通信失败 | 目标音箱离线、网络不可达、或返回错误。**Response Body 中包含设备原生的详细错误原因** |

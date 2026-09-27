@@ -9,9 +9,9 @@ description: 构建、测试、lint 与 Docker 打包发布的标准命令（Go 
 
 ```bash
 # 跑指定包测试（必须带 build tags，否则编译失败）
-make test PKG=./core/jukebox        # 112 specs
-make test PKG=./server/nativeapi    # 191 specs
-make test PKG=./core/lyrics         # 42 specs
+make test PKG=./core/jukebox        # 125 specs
+make test PKG=./server/nativeapi    # 198 specs
+make test PKG=./core/lyrics         # 41 specs
 make test PKG=./core/scrobbler      # 104 specs
 
 # 等价裸命令
@@ -26,6 +26,10 @@ gofmt -l core server conf scripts   # 必须无输出
 ```
 
 - 测试框架：Ginkgo v2 + Gomega（suite 文件 `*_suite_test.go`）
+- 例外：少数内部回归用裸 `testing`（`core/lyrics/batch_internal_test.go`、
+  `core/lyrics/translation_internal_test.go`、`core/lyrics/provider_errors_test.go`、
+  `core/jukebox/driver_mpd_test.go` 里的 `TestMPDDriver_*`）——它们要访问未导出字段，
+  所以文件必须是 `package <pkg>` 而不是 `<pkg>_test`
 - 格式化：`gofmt` / `goimports`（`make format` 会同时跑 JS prettier 和 `go mod tidy`）
 - 加了新 spec 后**顺手更新本文件与 `AGENTS.md` 第 2 节的数字**，数字漂移会让下一个人
   以为测试没跑到新代码。
@@ -34,7 +38,7 @@ gofmt -l core server conf scripts   # 必须无输出
 
 ```bash
 cd ui
-npm run test        # Vitest（92 文件 / 804 用例）
+npm run test        # Vitest（94 文件 / 843 用例）
 npx vitest run src/audioplayer/VolumeControl.test.jsx   # 只跑音量测试
 npx vitest run src/audioplayer/TranslateButton.test.jsx # 只跑歌词翻译测试
 npm run lint        # ESLint，--max-warnings 0
@@ -79,8 +83,10 @@ for f in ['resources/i18n/zh-Hans.json','resources/i18n/zh-Hant.json']:
 那样每次改动都会被下一次加载覆盖，脚本静默失效，文案根本没写进文件（真实踩过）。
 插值语法是 polyglot 的 `%{name}`，不是 react-i18next 的 `{{name}}`。
 
-还要查**源码引用了但语言包里没有**的 key（`make test-i18n` 只做 en → 翻译包方向，
-查不出这一类；这类 key 会静默回退到代码里的 `_:` 默认值，换语言就露馅）：
+还要查**源码引用了但语言包里没有**的 key。注意 `make test-i18n` **查不出这一类**：
+它只校验 en.json 与翻译包的对齐，且**只有"翻译包多出 en 没有的 key"（extra）判失败**，
+"en 有而某语言缺"（missing）只统计不报错（36 份语言包不可能同步，缺翻译是常态）。
+源码引用但语言包完全没有的 key 会静默回退到代码里的 `_:` 默认值，换语言就露馅：
 
 ```bash
 python3 scripts/check-i18n-keys.py     # 期望：0 个 key 缺失
@@ -257,4 +263,4 @@ docker rm -f nd-smoke
 4. 如涉及 UI 构建产物：`cd ui && npm run build` + `go build` 通过
 5. 涉及音量：确认所有改音量的入口都走 `dispatch(setVolume(...))`，
    没有新的地方直接写 `audioInstance.volume`（会被 store 权威 effect 夺回）
-6. 涉及界面：真实登录 + 移动视口点一遍（详见 AGENTS.md 第 7 节）
+6. 涉及界面：真实登录 + 移动视口点一遍（详见 AGENTS.md 第 9 节）

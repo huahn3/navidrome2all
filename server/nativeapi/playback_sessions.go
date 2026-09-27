@@ -9,6 +9,7 @@ import (
 
 	"github.com/deluan/rest"
 	"github.com/go-chi/chi/v5"
+	"github.com/navidrome/navidrome/conf"
 	"github.com/navidrome/navidrome/core/jukebox"
 	"github.com/navidrome/navidrome/core/scrobbler"
 	"github.com/navidrome/navidrome/log"
@@ -182,6 +183,31 @@ func (api *Router) getPlaybackSessionByID(w http.ResponseWriter, r *http.Request
 	http.Error(w, "session not found", http.StatusNotFound)
 }
 
+// pauseRemoteOutputIfNeeded 在接管方选择"本机出声"时，把正在发声的远程音箱暂停掉。
+// 这是接管流程里**唯一**需要 Jukebox 的动作，所以门禁放在这里而不是端点入口：
+// Jukebox.Enabled 默认 false，拿它当端点级门禁会让"只用本机播放"的部署完全无法接管。
+//
+// 跳过而不是报错：暂停远程音箱只是"别让两边同时响"的善后动作，没开多输出端时
+// 根本没有远程设备在响，不该因此拒绝一次合法的接管。
+func pauseRemoteOutputIfNeeded(ctx context.Context, targetOutput string) {
+	if targetOutput != "" && targetOutput != "browser" && targetOutput != "local" &&
+		targetOutput != jukebox.BrowserOutputID {
+		return
+	}
+	if !conf.Server.Jukebox.Enabled {
+		return
+	}
+	// Jukebox.AdminOnly=true 时只有管理员能驱动远程设备（与 /api/jukebox/control 同规则）
+	if conf.Server.Jukebox.AdminOnly {
+		if user, ok := request.UserFrom(ctx); !ok || !user.IsAdmin {
+			return
+		}
+	}
+	if jukebox.GetInstance().Selected() != jukebox.BrowserOutputID {
+		_ = jukebox.GetInstance().Control("pause", 0)
+	}
+}
+
 // canTakeOverSession 决定 caller 能否接管 target 会话。
 // 拆成纯函数是为了能脱离 play tracker 单例直接测这条安全规则。
 func canTakeOverSession(caller model.User, target *scrobbler.PlaybackSession) bool {
@@ -194,14 +220,10 @@ func canTakeOverSession(caller model.User, target *scrobbler.PlaybackSession) bo
 
 func (api *Router) takeoverPlaybackSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	// 接管会 pause 远程输出（下面直接调 jukebox singleton），所以必须先过
-	// jukeboxGuard：否则 Jukebox.Enabled=false 的部署也能被这个端点操作，
-	// 而且它绕过了 Jukebox.AdminOnly（普通用户本不该控制远程设备）。
-	// 注意：这里用 jukeboxGuard 而不是 jukeboxAdminGuard——上面已经有针对
-	// "单个会话归属"的独立校验，AdminOnly 针对的是全局设备控制权。
-	if !jukeboxGuard(w) {
-		return
-	}
+	// 刻意**不**在这里过 jukeboxGuard：接管的核心是"改写某一个会话的状态"，
+	// 而 Jukebox.Enabled 默认是 false——用它当端点级门禁会让"只用本机播放"
+	// 的部署完全无法接管。真正需要 Jukebox 的只有下面"暂停远程音箱"那一步，
+	// 门禁下沉到那里（见 pauseRemoteOutputIfNeeded）。
 	sessionID := chi.URLParam(r, "id")
 	if sessionID == "" {
 		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
@@ -302,11 +324,7 @@ func (api *Router) takeoverPlaybackSession(w http.ResponseWriter, r *http.Reques
 	if targetOutput == "" && targetSession.OutputDevice != "" {
 		targetOutput = targetSession.OutputDevice
 	}
-	if targetOutput == "" || targetOutput == "browser" || targetOutput == "local" || targetOutput == jukebox.BrowserOutputID {
-		if jukebox.GetInstance().Selected() != jukebox.BrowserOutputID {
-			_ = jukebox.GetInstance().Control("pause", 0)
-		}
-	}
+	pauseRemoteOutputIfNeeded(ctx, targetOutput)
 
 	outDev := targetSession.OutputDevice
 	vol := targetSession.Volume

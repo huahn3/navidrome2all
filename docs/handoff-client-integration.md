@@ -31,7 +31,10 @@
 | `Jukebox.Enabled` | 才能列出/切换**远程输出设备**（MPD/DLNA/小米）。只用本机播放可忽略 | `false` |
 | 网络 | 客户端必须能访问服务端；`BaseUrl` 决定流地址主机名 | — |
 
-> 接管进度、SSE 互斥、会话列表**不依赖** Jukebox；只有"继承别人正在用的音箱"才需要。
+> 接管会顺带暂停正在发声的远程音箱，这一步需要 Jukebox，但**端点本身不依赖它**
+（`Jukebox.Enabled=false` 时只是跳过那一步，接管照常 200）。
+`Jukebox.AdminOnly=true` 且当前用户非管理员时同样跳过——暂停音箱是"别两边同时响"
+的善后动作，不该因此拒绝一次合法接管。
 
 ---
 
@@ -43,7 +46,7 @@
 X-ND-Authorization: Bearer <JWT>
 ```
 
-**实测**：带标准 `Authorization: Bearer <JWT>` → **401**（服务端不读这个头）。
+**实测**：带标准 `X-ND-Authorization: Bearer <JWT>` → **401**（服务端不读这个头）。
 后门：任意 `/api/*` 都支持 query `?jwt=<JWT>`（如 `/api/playback/sessions?jwt=xxx`，实测 200），
 适合不方便设 header 的调用方。
 
@@ -102,7 +105,7 @@ curl -s -X POST <BASE>/auth/login -H 'Content-Type: application/json' \
 |---|---|---|---|
 | 会话列表 | `GET /api/playback/sessions` | `X-ND-Authorization` 或 `?jwt=` | 200；带/不带尾部 `/` 都是 200 |
 | 单个会话 | `GET /api/playback/sessions/{sessionId}` | 同上 | 存在 200，不存在 **404** |
-| **接管** | `POST /api/playback/sessions/{sessionId}/takeover` | 同上 | **永远 200**（目标不存在也 200，见第 9 节） |
+| **接管** | `POST /api/playback/sessions/{sessionId}/takeover` | 同上 + **会话归属** | 200；目标不存在 **404**；接管他人会话 **403**（管理员不受限） |
 | SSE 事件 | `GET /api/events?jwt=<JWT>` | query jwt | 200，事件名 `playbackHandoff` |
 | 播放上报 | `GET /rest/reportPlayback?...` | Subsonic `u/t/s` | `status:"ok"` |
 | 会话列表（Subsonic 口） | `GET /rest/getNowPlaying?...` | Subsonic `u/t/s` | 字段更全，见 6.2 |
@@ -360,16 +363,21 @@ POST /api/lyrics/translate {"songId":"…","targetLang":"zh-CN"}   # 缺失时�
 
 | # | 该文档写法 | 实测/代码真相 |
 |---|---|---|
-| 1 | "亦兼容 `Authorization: Bearer`" | ❌ **只认 `X-ND-Authorization`**，标准头 → 401；替代方案是 `?jwt=` |
+| 1 | "亦兼容 `Authorization: Bearer`" | ❌ **只认 `X-ND-Authorization: Bearer`**，标准 `Authorization` 头 → 401；替代方案是 `?jwt=` |
 | 2 | 建议 10~15 秒上报 | 服务端无强制，但 TTL = 剩余曲长 + 5s，**间隔必须短于剩余时长**；自带网页端实际用 60s（不可照抄） |
 | 3 | 未提 `getNowPlaying` | 实测可用且字段更全；`playerId` 是序号，接管用 `sessionId` |
 | 4 | 未提 volume 语义 | `volume=0` → 100/保持旧值，**静音传不上去**；不传参数 = 保持旧值 |
+| 4b | 未提 `/rest/scrobble` 的陷阱 | **禁止**用 `/rest/scrobble?submission=false` 上报会话：它硬编码 `bilingual=false`、`playbackRate=1.0`、`positionMs=position*1000`（毫秒被截断到秒），会**无条件覆盖**双语标志与精度。要上报扩展维度只能用 `/rest/reportPlayback` |
 | 5 | 未提接管后会话去向 | 接管成功后目标变 `paused` 并**继续留在列表 30 分钟**，UI 要决定展示还是隐藏 |
-| 6 | takeover 目标不存在 | 不是 404：**永远 200**，只是 `session` 缺失（`GET /{id}` 才 404） |
+| 6 | takeover 目标不存在 | **是 404**（`session not found or already stopped`）。早先版本会"照样暂停全局 jukebox 并返回 200"，现已修复 |
+| 6b | 未提接管归属 | **必须校验**：`caller.IsAdmin \|\| target.UserId == caller.ID`，否则 **403** `not allowed to take over another user's session`。注意 404 先于 403——无库权限的会话与不存在的会话都返回 404 |
+| 6c | 未提 Jukebox 门禁 | takeover 端点**不**被 `Jukebox.Enabled` 挡住；它只在"暂停远程音箱"那一步检查（`Enabled=false` 或 `AdminOnly` 下非管理员则跳过该步，接管仍 200） |
 | 7 | 未提 SSE 过滤 | 事件广播给**所有人**，必须自己按 `targetSessionId` 过滤 |
 | 8 | 未提 `DevActivityPanel` | 为 `false` 时 `/api/events` 根本不挂载（默认 `true`） |
 | 9 | 未提接管后是否切设备 | 服务端**不会**替接管方 `select` 输出设备，客户端要自己调 `/api/jukebox/select` |
 | 10 | takeover body 必填项 | 全部可选，空 body 也能成功；`action` 非法才 400 |
+| 11 | `playMode=single\|all\|order` | 内核枚举是 `order` / `orderLoop` / `singleLoop` / `shufflePlay`。服务端不校验，按 `single`/`all` 上报会让网页端接管后循环模式不生效 |
+| 12 | 未提接管会清空本地队列 | 网页端 `reduceTakeoverTrack` 会把本地队列替换成这一首（`queue:[item], clear:true`）——接管即丢弃播放列表 |
 
 ---
 

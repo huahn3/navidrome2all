@@ -41,7 +41,7 @@ X-ND-Authorization: Bearer <token>
 
 ```http
 GET /api/playback/sessions
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 ```
 
 **响应示例 (200 OK)**：
@@ -70,7 +70,7 @@ Authorization: Bearer <token>
       "isCurrentSession": false,
       "outputDevice": "xiaomi_l7a",
       "volume": 65,
-      "playMode": "single",
+      "playMode": "singleLoop",
       "bilingual": true
     },
     {
@@ -92,7 +92,7 @@ Authorization: Bearer <token>
       "isCurrentSession": true,
       "outputDevice": "browser",
       "volume": 80,
-      "playMode": "all",
+      "playMode": "orderLoop",
       "bilingual": false
     }
   ]
@@ -110,7 +110,7 @@ Authorization: Bearer <token>
 | `state` | string | 当前状态：`"playing"`（正在播放）、`"paused"`（暂停中）、`"starting"` |
 | `outputDevice` | string | 当前发声输出端：`"browser"`（本机网页/应用），或 Jukebox 输出设备 ID（如 `"xiaomi_l7a"`, `"mpd"` 等） |
 | `volume` | integer | 当前播放音量（`0 ~ 100` 整数百分比），接管端需按音量模型等比采纳 |
-| `playMode` | string | 当前循环模式：`"single"`（单曲循环）、`"all"`（列表循环）、`"order"`（顺序播放）等 |
+| `playMode` | string | 当前循环模式：**内核枚举的 4 个值**：`"order"`（顺序）、`"orderLoop"`（列表循环）、`"singleLoop"`（单曲循环）、`"shufflePlay"`（随机）——来自 `navidrome-music-player` 的 `mode`。**不是** `single`/`all`/`order`；服务端不校验取值，发错值网页端接管后循环模式不生效 |
 | `bilingual` | boolean | 是否开启了歌词双语对照翻译，接管端可自动无缝拉取并展示双语歌词 |
 | `isCurrentSession`| boolean | 是否是当前发起请求的客户端自身 |
 
@@ -122,7 +122,7 @@ Authorization: Bearer <token>
 
 ```http
 GET /api/playback/sessions/{sessionId}
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 ```
 **响应**：单个会话 JSON 对象（格式同上）。若会话已结束或不存在则返回 `404 Not Found`。
 
@@ -135,7 +135,7 @@ Authorization: Bearer <token>
 ```http
 POST /api/playback/sessions/{sessionId}/takeover
 Content-Type: application/json
-Authorization: Bearer <token>
+X-ND-Authorization: Bearer <token>
 
 {
   "action": "pause",
@@ -171,11 +171,35 @@ Authorization: Bearer <token>
     "positionSec": 56.0,
     "outputDevice": "xiaomi_l7a",
     "volume": 65,
-    "playMode": "single",
+    "playMode": "singleLoop",
     "bilingual": true
   }
 }
 ```
+
+**状态码**：
+
+| 码 | 何时 | body |
+|---|---|---|
+| 200 | 成功（`action=pause` 或 `stop`） | `TakeoverResponse` |
+| 400 | 缺 `sessionId`，或 `action` 不是 `pause`/`stop` | 纯文本 |
+| 401 | 请求上下文里没有用户 | `authentication required` |
+| 404 | 会话不存在、已停止，或当前用户对该会话所属媒体库**无访问权** | `session not found or already stopped` |
+| 403 | **归属校验失败**——普通用户接管别人的会话 | `not allowed to take over another user's session` |
+
+> **归属校验**（`canTakeOverSession`）：`caller.IsAdmin || target.UserId == caller.ID`。
+> 管理员可以接管任何人的会话（共享音箱场景需要），普通用户只能接管自己的。
+> 接管是**写**操作（会 pause/stop 对方的播放、改写对方上报的状态），不能像读取那样
+> 对全站用户开放。注意 **404 先于 403**：无库权限的会话与不存在的会话返回同样的 404。
+
+> **不会被 `Jukebox.Enabled` 挡住**。接管流程里唯一用到 Jukebox 的动作是"接管方选择
+> 本机出声时暂停正在发声的远程音箱"，那一步在 `Enabled=false`（默认值）或
+> `AdminOnly=true` 且当前用户非管理员时会**跳过**，接管本身照常成功。
+> 回归测试：`playback_sessions_test.go` 的 `works even when Jukebox.Enabled is false`。
+
+> 接管成功后，本地队列会被替换成这一首（网页端 `reduceTakeoverTrack` 的
+> `queue:[item], clear:true`），目标会话变 `paused` 并**继续留在列表里**直到 TTL 过期
+> （剩余曲长 + 5s）。
 
 ---
 
@@ -188,10 +212,20 @@ GET /api/events?jwt=<token>
 Accept: text/event-stream
 ```
 
+> ⚠️ **服务端没有事件重放**。响应里虽然带了 `id: <n>`，但没有任何 `Last-Event-ID`
+> 回放逻辑，且发送缓冲只有 1 格、满了直接丢弃。所以**断连期间的事件永久丢失**。
+> 客户端必须靠轮询 `GET /api/playback/sessions` 兜底，不能只依赖 SSE。
+> keepAlive 事件每 15 秒一次，客户端应忽略它。
+
 **SSE 事件推送示例**：
 ```
 event: playbackHandoff
-data: {"targetSessionId":"huhan3-NavidromeUI-112233","sourceSessionId":"huhan3-Chora-987abc","action":"pause","songId":"song_12345","positionMs":56000,"newPlayerName":"Chora (手机端)","outputDevice":"xiaomi_l7a","volume":65,"playMode":"single"}
+data: {"targetSessionId":"huhan3-NavidromeUI-112233","sourceSessionId":"huhan3-Chora-987abc","action":"pause","songId":"song_12345","positionMs":56000,"newPlayerName":"Chora (手机端)","outputDevice":"xiaomi_l7a","volume":65,"playMode":"singleLoop"}
+```
+
+> 负载**没有** `bilingual` 字段（`events.PlaybackHandoff` 的实际字段就是上面这 9 个）。
+> 被接管方若也要继承双语歌词，只能回头查 `GET /api/playback/sessions`。
+> `outputDevice`/`volume`/`playMode` 是 `omitempty`，值为空时字段直接不出现。
 ```
 
 #### 客户端响应契约（极其重要）：
@@ -287,7 +321,7 @@ data class PlaybackSessionDto(
     val isCurrentSession: Boolean,
     val outputDevice: String = "browser",
     val volume: Int = 100,
-    val playMode: String = "all",
+    val playMode: String = "orderLoop",
     val bilingual: Boolean = false
 )
 
@@ -324,13 +358,13 @@ data class PlaybackHandoffEvent(
 interface PlaybackHandoffApi {
     @GET("api/playback/sessions")
     suspend fun getActiveSessions(
-        @Header("Authorization") token: String
+        @Header("X-ND-Authorization") token: String
     ): Response<PlaybackSessionsResponse>
 
     @POST("api/playback/sessions/{sessionId}/takeover")
     suspend fun takeoverSession(
         @Path("sessionId") sessionId: String,
-        @Header("Authorization") token: String,
+        @Header("X-ND-Authorization") token: String,
         @Body request: TakeoverRequest
     ): Response<TakeoverResponse>
 }
