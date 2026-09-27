@@ -711,6 +711,59 @@ Select 会渲染成**一片空白**，用户看不出当前设置。现在会把
 "故意写错的 key 名"当断言，已排除 `.test.` / `.stories.`。
 
 现在 517 个 key 全部有定义，校验器对模板拼 key 会主动提示。
+### 11.7.5 Popover 类弹层：`100vw` 不等于可用宽度
+
+"正在播放"面板在手机上右侧的接管按钮被裁掉。根因不是响应式缺失，而是两个细节叠加：
+
+1. MUI Popover 的 `marginThreshold = 16`，面板**超宽时不会缩窄内容**，而是把它
+   **左推到 `left = 16`**（`node_modules/@material-ui/core/Popover/Popover.js:271`）。
+   于是右缘 = `16 + 面板宽`，很容易超过视口。
+2. 原来的 `width: 26em`（416px）+ `maxWidth: calc(100vw - 16px)`：
+   `100vw` **不扣除** Popover 双侧各 16px 的 margin，减 16 不够，要减 32。
+
+改成 `width: min(26em, calc(100vw - 32px))`，六档视口实测（Chromium + CDP）：
+
+| 视口 | 修复前右缘 | 修复后右缘 |
+|---|---|---|
+| 320 | 432（溢出 112） | 304 ✓ |
+| 375 | 432（溢出 57） | 359 ✓ |
+| 390 | 432（溢出 42） | 374 ✓ |
+| 430 | 432（溢出 2） | 414 ✓ |
+
+**给后来者的通用规则**：本项目里凡是"挂在按钮旁边的 MUI Popover/Menu"，
+窄屏宽度上限一律用 `calc(100vw - 32px)`（2 × marginThreshold），不要用 `- 16px`。
+
+### 11.7.6 播放 dock 不跟随主题：JSS 按首个 theme 缓存
+
+现象：深色主题下底部播放 dock 仍是白底。排查发现**两个独立原因**：
+
+**1. `useStyle()` 在 `ThemeProvider` 外面调用**（`Player.jsx`）。
+MUI 的 `ThemeProvider` 靠 context 生效，组件在 Provider 之外时 `makeStyles` 拿到的
+是外层默认主题，于是 `styles.js` 里的 `isDark` 恒为 false。
+修法：把播放器渲染挪进 Provider 内部的 `ThemedPlayer` 子组件。
+
+**2. 更深一层：MUI v4 的 JSS 会按 theme 对象缓存已生成的规则**（`sheetsManager`）。
+所以就算挪进 Provider，切换主题后规则也不重算——实测 DOM 里始终只有**一个**
+`jss346` 类，Light/Dark/Dracula 全部渲染成深色。
+修法：配色不再用 JSS 硬编码，改成 **CSS 变量**：
+
+```js
+// useCurrentTheme.js：主题变化时写进 <html>
+root.style.setProperty('--nd-dock-bg', isDark ? 'rgba(20,24,36,0.88)' : 'rgba(255,255,255,0.92)')
+// styles.js：直接引用变量
+background: 'var(--nd-dock-bg) !important'
+```
+
+CSS 变量由浏览器解析，主题一变立刻生效，不受 JSS 缓存影响。
+
+**3. 顺带修的既有 bug**：`light.js` / `ligera.js` / `nutball.js` 三个浅色主题
+**没有声明 `palette.type`**，靠 `theme.palette.type === 'dark'` 判断深浅的地方
+在这三个主题下会全部走错分支。已补上，并加了单测守住
+（`theme.test.js`：每个主题都必须声明 `palette.type`，现 108 例）。
+
+实测（逐个主题真实点击切换后读计算样式）：9 个浅色主题 dock 变白、Dark 等
+深色主题保持深色，切换即时生效。
+
 ### 11.8 本轮发布
 
 - 镜像：`huhan333/navidrome2all:latest` 与 `:bfdd120f`（同一 digest

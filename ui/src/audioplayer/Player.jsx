@@ -173,11 +173,21 @@ const Player = () => {
 
   const visible = authenticated && playerState.queue.length > 0
   const isRadio = playerState.current?.isRadio || false
-  const classes = useStyle({
-    isRadio,
-    visible,
-    enableCoverAnimation: config.enableCoverAnimation,
-  })
+  const onPlayModeChange = useCallback(
+    (mode) => dispatch(setPlayMode(mode)),
+    [dispatch],
+  )
+  // 注意：useStyle 必须在下面那个 ThemeProvider **内部**调用。
+  // 放在外面时拿到的是外层默认主题（恒为 light），于是 styles.js 里的
+  // `isDark` 永远 false —— 深色主题下 dock 仍然渲染成白色。
+  const isDarkTheme = theme.palette?.type === 'dark'
+  const usePlayerStyles = () =>
+    useStyle({
+      isRadio,
+      visible,
+      isDark: isDarkTheme,
+      enableCoverAnimation: config.enableCoverAnimation,
+    })
   const showNotifications = useSelector(
     (state) => state.settings.notifications || false,
   )
@@ -1038,24 +1048,49 @@ const Player = () => {
 
   return (
     <ThemeProvider theme={createMuiTheme(theme)}>
-      <ReactJkMusicPlayer
-        ref={playerRef}
-        {...options}
-        className={classes.player}
+      <ThemedPlayer
+        options={options}
+        playerRef={playerRef}
+        handlers={handlers}
+        keyMap={keyMap}
+        usePlayerStyles={usePlayerStyles}
         onAudioListsChange={onAudioListsChange}
         onAudioProgress={onAudioProgress}
         onAudioPlay={onAudioPlay}
         onAudioPlayTrackChange={onAudioPlayTrackChange}
         onAudioPause={onAudioPause}
-        onPlayModeChange={(mode) => dispatch(setPlayMode(mode))}
+        onPlayModeChange={onPlayModeChange}
         onAudioEnded={onAudioEnded}
         onCoverClick={onCoverClick}
         onAudioError={onAudioError}
         onBeforeDestroy={onBeforeDestroy}
         getAudioInstance={setAudioInstance}
       />
-      <GlobalHotKeys handlers={handlers} keyMap={keyMap} allowChanges />
     </ThemeProvider>
+  )
+}
+
+// 播放器必须渲染在 ThemeProvider 内部，否则 useStyle 拿到的是外层默认主题
+// （恒为 light），深色主题下 dock 仍然是白底。见上方 usePlayerStyles 的注释。
+const ThemedPlayer = ({
+  usePlayerStyles,
+  options,
+  playerRef,
+  handlers,
+  keyMap,
+  ...rest
+}) => {
+  const classes = usePlayerStyles()
+  return (
+    <>
+      <ReactJkMusicPlayer
+        ref={playerRef}
+        {...options}
+        {...rest}
+        className={classes.player}
+      />
+      <GlobalHotKeys handlers={handlers} keyMap={keyMap} allowChanges />
+    </>
   )
 }
 

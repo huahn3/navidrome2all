@@ -548,4 +548,33 @@ describe('<NowPlayingPanel />', () => {
       expect(screen.queryByRole('presentation')).not.toBeInTheDocument()
     })
   })
+  it('does not use a rigid 26em width that would overflow small screens', async () => {
+    // MUI Popover 的 paper 不会缩窄过宽的内容，只会把过窄的面板往左推，
+    // 所以面板宽度必须用 min() 真正收缩，否则小屏上右侧的"接管播放"按钮会被裁掉。
+    const store = createMockStore()
+    render(
+      <Provider store={store}>
+        <NowPlayingPanel />
+      </Provider>,
+    )
+
+    await vi.advanceTimersByTimeAsync(500)
+    fireEvent.click(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Artist')).toBeInTheDocument()
+    })
+
+    const list = document.querySelector('.MuiList-root')
+    expect(list).toBeTruthy()
+    // jsdom 不做真实布局、也不解析 CSS min()，所以这里直接断言声明。
+    //
+    // 真实约束（已用 Chromium 实测六档视口）：MUI Popover 超宽时不会缩窄内容，
+    // 而是把面板左推到 marginThreshold=16，右缘 = 16 + 面板宽。
+    // 刚性 26em(416px) 在 390px 视口下右缘 432 → 溢出 42px，右侧接管按钮被裁；
+    // 减 16px 不够（100vw 不含 Popover 双侧 margin），必须减 32px。
+    const declared = window.getComputedStyle(list).width
+    expect(declared).toContain('min(')
+    expect(declared).toContain('26em')
+    expect(declared).toContain('calc(100vw - 32px)')
+  })
 })

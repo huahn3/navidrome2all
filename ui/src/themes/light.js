@@ -3,6 +3,9 @@ import stylesheet from './light.css.js'
 export default {
   themeName: 'Light',
   palette: {
+    // 必须显式声明：styles.js 等处靠 palette.type 判断深浅色，
+    // 缺这一项时浅色主题会被当成深色，播放 dock 渲染成白底。
+    type: 'light',
     secondary: {
       light: '#5f5fc4',
       dark: '#001064',

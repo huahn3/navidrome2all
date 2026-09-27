@@ -52,6 +52,26 @@ const useCurrentTheme = () => {
     const bgColor =
       theme.palette?.background?.default || (isDark ? '#303030' : '#fafafa')
     document.body.style.backgroundColor = bgColor
+
+    // 播放 dock 的配色变量。写在这里而不是 styles.js 里按 isDark 硬编码：
+    // JSS 会按首次 theme 缓存规则，切换主题后不重算，dock 配色会停在旧主题。
+    // 变量由 CSS 直接读取，主题一变立刻生效。
+    const root = document.documentElement
+    if (isDark) {
+      root.style.setProperty('--nd-dock-bg', 'rgba(20, 24, 36, 0.88)')
+      root.style.setProperty('--nd-dock-border', 'rgba(255, 255, 255, 0.08)')
+      root.style.setProperty(
+        '--nd-dock-shadow',
+        '0 -4px 24px rgba(0, 0, 0, 0.45)',
+      )
+    } else {
+      root.style.setProperty('--nd-dock-bg', 'rgba(255, 255, 255, 0.92)')
+      root.style.setProperty('--nd-dock-border', 'rgba(0, 0, 0, 0.08)')
+      root.style.setProperty(
+        '--nd-dock-shadow',
+        '0 -4px 20px rgba(0, 0, 0, 0.08)',
+      )
+    }
   }, [theme])
 
   // We never server-render, so let media queries resolve on the first render: the default

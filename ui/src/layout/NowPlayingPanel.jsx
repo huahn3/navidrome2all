@@ -32,9 +32,16 @@ import * as jukebox from '../audioplayer/jukebox'
 const useStyles = makeStyles((theme) => ({
   button: { color: 'inherit' },
   list: {
-    // 手机上 26em（约 416px）比视口还宽，弹层右侧会被裁掉，所以再叠一层视口上限
-    width: '26em',
-    maxWidth: 'calc(100vw - 16px)',
+    // 桌面保持 26em，窄屏必须能真正收缩。
+    //
+    // 为什么不能只写 `width: 26em` + `maxWidth: calc(100vw - 16px)`：
+    // MUI Popover 的 paper 是 fixed 且有 `marginThreshold = 16`，面板超宽时
+    // 定位逻辑会把它**左推到 left = 16**（而不是缩窄），于是
+    // 右缘 = 16 + 面板宽，容易超过视口 → 右侧的"接管播放"按钮被裁掉。
+    // 而 100vw 不扣除 Popover 双侧各 16px 的 margin，所以减 16 不够，
+    // 要减 32px（= 2 × marginThreshold）才真正落在屏幕内。
+    width: 'min(26em, calc(100vw - 32px))',
+    maxWidth: '100%',
     // 卡片实际高度随标题/音量的换行而变，写死 120px 会把最后一条切掉一半；
     // 给出视口上限并保留滚动，任何条目都能完整看到
     maxHeight: (props) => {

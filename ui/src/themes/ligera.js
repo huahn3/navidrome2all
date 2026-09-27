@@ -60,6 +60,8 @@ const musicListActions = {
 export default {
   themeName: 'Ligera',
   palette: {
+    // 同 light.js：缺 type 会让播放 dock 误判成深色
+    type: 'light',
     primary: {
       light: bLight['300'],
       main: '#464646',

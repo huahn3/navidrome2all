@@ -1,8 +1,11 @@
 import { makeStyles } from '@material-ui/core/styles'
 
 const useStyle = makeStyles(
-  (theme) => {
-    const isDark = theme.palette.type === 'dark'
+  (theme, props) => {
+    // 深浅色以调用方传入的 isDark 为准：MUI v4 的 makeStyles 会按 theme 对象
+    // 缓存已生成的规则（sheetsManager），主题切换后不一定重算，只靠 context
+    // 会让 dock 配色永远停在第一次渲染时的主题。
+    const isDark = props?.isDark ?? theme.palette.type === 'dark'
     return {
       audioTitle: {
         textDecoration: 'none',
@@ -64,18 +67,16 @@ const useStyle = makeStyles(
         },
 
         // Modern Dock Bar Container
+        //
+        // 配色走 CSS 变量（--nd-dock-*），由 useCurrentTheme 按当前主题写进 <html>。
+        // 不用 JSS 的 isDark 硬编码：MUI v4 的 makeStyles 会按首个 theme 对象缓存
+        // 生成的规则，切换主题后不会重算，结果是 dock 配色永远停在第一次渲染时的主题。
         '& .music-player-panel': {
-          background: isDark
-            ? 'rgba(20, 24, 36, 0.88) !important'
-            : 'rgba(255, 255, 255, 0.92) !important',
+          background: 'var(--nd-dock-bg) !important',
           backdropFilter: 'blur(20px) saturate(180%) !important',
           WebkitBackdropFilter: 'blur(20px) saturate(180%) !important',
-          borderTop: `1px solid ${
-            isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'
-          } !important`,
-          boxShadow: isDark
-            ? '0 -4px 24px rgba(0, 0, 0, 0.45) !important'
-            : '0 -4px 20px rgba(0, 0, 0, 0.08) !important',
+          borderTop: '1px solid var(--nd-dock-border) !important',
+          boxShadow: 'var(--nd-dock-shadow) !important',
           color: `${theme.palette.text.primary} !important`,
           transition: 'all 0.3s ease !important',
           height: '76px',

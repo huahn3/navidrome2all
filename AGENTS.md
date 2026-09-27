@@ -325,7 +325,8 @@ ui/src/jukebox/          管理 → 输出设备（自定义卡片页 + 三步�
   OutputEditorDialog.jsx 三步向导：1.类型卡片 → 2.连接(按类型裁剪) → 3.高级(可选)
   outputConstants.js     SECRET_MASK / EMPTY_OUTPUT
 ui/src/audioplayer/volume.js  音量换算与限幅纯函数（测试覆盖，禁止再散落 clamp/²）
-ui/src/common/RouteFallback.jsx  懒加载路由的骨架屏兜底
+ui/src/themes/useCurrentTheme.js  主题应用：注入 player.stylesheet + 写 --nd-dock-* 变量
+ui/src/themes/*.js               28 个主题；**每个都必须声明 palette.type**（缺了播放 dock 会误判深浅）
 ui/src/index.css                  .responsive-fields：手机端窄屏防溢出（见第 9 节）
 ui/src/reducers/playerReducer.js   outputDevice 与 bilingualActive/Lyrics 状态与迁移
 ui/src/store/createAdminStore.js   持久化白名单 + 音量 0 兜底
@@ -371,7 +372,7 @@ contrib/jukebox-testing/ 假 MPD / 假 DLNA 服务器（不接真设备复现链
 根因不是缺媒体查询，而是 `Layout` 是 `min-width: fit-content`：任何后代的
 min-content 超过视口，整页就被撑宽，右侧按钮/文字落到屏幕外（看起来像"被隐藏"）。
 
-七条硬规则：
+九条硬规则：
 
 1. **自研表单页的容器加 `className="responsive-fields"`**。`ui/src/index.css` 里已备好
    `width:0 + min-width:100%` 的输入控件规则——给控件加 `min-width: 0` **没用**，
@@ -382,13 +383,16 @@ min-content 超过视口，整页就被撑宽，右侧按钮/文字落到屏幕�
    并保留滚动；折叠区加 `unmountOnExit`，否则隐藏内容仍参与宽度计算。
 4. **表格**：`overflow-x: auto` **单独不够**——容器是普通块时 min-content 仍等于表格
    宽度，必须配 `contain: inline-size`（`.responsive-fields` 里已配好）。
-5. **验收必须复现用户的真实数据状态**：空表格/空列表/未登录态会隐藏一整条代码路径。
+5. **MUI Popover / Menu 类弹层**：窄屏宽度上限用 `calc(100vw - 32px)`（2 × Popover 的
+   `marginThreshold=16`），**不要用 `- 16px`**。Popover 超宽时不会缩窄内容，只会把面板
+   左推到 `left=16`，右缘 = 16 + 面板宽，容易出屏（`NowPlayingPanel` 就踩过）。
+6. **验收必须复现用户的真实数据状态**：空表格/空列表/未登录态会隐藏一整条代码路径。
    用户说"还有问题"时，直接去他的实例上量，别在自建等价环境里反复验证。
 
-6. **下拉/选项的文案要短**。Select 的选项宽度会变成控件的 min-content，
+7. **下拉/选项的文案要短**。Select 的选项宽度会变成控件的 min-content，
    `Google Gemini (支持 gemini-flash-latest / gemini-flash-lite-latest)` 这种文案
    会把整页撑到 500+px。详细信息放说明卡片或 helper 文本里。
-7. **验收不能只看"没有溢出元素"**——那可能意味着控件被压到只剩几个字符。
+8. **验收不能只看"没有溢出元素"**——那可能意味着控件被压到只剩几个字符。
    还要断言关键控件宽度足够（如 Select > 200px）且文案未被截断
    （`el.scrollWidth <= el.clientWidth`）。
 

@@ -3,6 +3,8 @@ import stylesheet from './nutball.css.js'
 export default {
   themeName: 'Nutball',
   palette: {
+    // 同 light.js：缺 type 会让播放 dock 误判成深色
+    type: 'light',
     primary: {
       main: '#80ea00',
       light: '#fff',
